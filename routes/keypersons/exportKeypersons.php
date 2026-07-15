@@ -8,7 +8,7 @@ require_once __DIR__ . '/../../includes/giftLists.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_USER], 'You are not authorised to export key persons.');
+requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER], 'You are not authorised to export key persons.');
 
 $q = cleanString($_GET['search'] ?? ($_GET['q'] ?? ''));
 $clientId = (int) ($_GET['client_id'] ?? 0);

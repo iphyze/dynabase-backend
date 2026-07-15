@@ -87,7 +87,7 @@ $teamSummary = dbFetchOne(
     "SELECT SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_members,
             SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_members
      FROM users
-     WHERE parent_pms_admin_id = ? AND role = 'user'",
+     WHERE parent_pms_admin_id = ? AND role = 'pms_user'",
     'i',
     [$ownerPmsAdminId]
 ) ?? [];

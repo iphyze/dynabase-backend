@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/includes/bootstrap.php';
 require_once __DIR__ . '/includes/authorization.php';
+require_once __DIR__ . '/includes/permissions.php';
 
 $basePath = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/');
 $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
@@ -30,6 +31,7 @@ $routes = [
     '/users/bulk-update' => 'routes/users/bulkUpdateUsers.php',
     '/users/reset-password' => 'routes/users/resetPassword.php',
     '/users/export' => 'routes/users/exportUsers.php',
+    '/users/permissions' => 'routes/users/permissions.php',
 
     '/clients/list' => 'routes/clients/list.php',
     '/clients/show' => 'routes/clients/show.php',
@@ -66,6 +68,17 @@ $routes = [
     '/documents/delete' => 'routes/documents/delete.php',
     '/documents/bulk-delete' => 'routes/documents/bulkDelete.php',
     '/documents/file' => 'routes/documents/file.php',
+    '/documents/revisions/list' => 'routes/documents/revisionsList.php',
+    '/documents/revisions/create' => 'routes/documents/revisionsCreate.php',
+    '/documents/revisions/replace' => 'routes/documents/revisionsReplace.php',
+    '/documents/revisions/set-current' => 'routes/documents/revisionsSetCurrent.php',
+    '/documents/shares/list' => 'routes/documents/shares/list.php',
+    '/documents/shares/create' => 'routes/documents/shares/create.php',
+    '/documents/shares/update' => 'routes/documents/shares/update.php',
+    '/documents/shares/revoke' => 'routes/documents/shares/revoke.php',
+    '/documents/public/share' => 'routes/documents/public/share.php',
+    '/documents/public/unlock' => 'routes/documents/public/unlock.php',
+    '/documents/public/file' => 'routes/documents/public/file.php',
 
     '/dashboard/overview' => 'routes/dashboard/overview.php',
     '/dashboard/pms' => 'routes/dashboard/pms.php',
@@ -107,6 +120,20 @@ $routes = [
     '/prequalifications/delete' => 'routes/prequalifications/delete.php',
     '/prequalifications/bulk-delete' => 'routes/prequalifications/bulkDelete.php',
     '/prequalifications/export' => 'routes/prequalifications/export.php',
+
+    '/submission-register/options' => 'routes/submission-register/options.php',
+    '/submission-register/list' => 'routes/submission-register/list.php',
+    '/submission-register/overview' => 'routes/submission-register/overview.php',
+    '/submission-register/show' => 'routes/submission-register/show.php',
+    '/submission-register/pdf' => 'routes/submission-register/pdf.php',
+    '/submission-register/create' => 'routes/submission-register/create.php',
+    '/submission-register/update' => 'routes/submission-register/update.php',
+    '/submission-register/delete' => 'routes/submission-register/delete.php',
+    '/submission-register/export' => 'routes/submission-register/export.php',
+    '/submission-register/updates/list' => 'routes/submission-register/updatesList.php',
+    '/submission-register/updates/create' => 'routes/submission-register/updatesCreate.php',
+    '/submission-register/updates/update' => 'routes/submission-register/updatesUpdate.php',
+    '/submission-register/updates/delete' => 'routes/submission-register/updatesDelete.php',
 
     '/surveys/public/form' => 'routes/surveys/public/form.php',
     '/surveys/public/submit' => 'routes/surveys/public/submit.php',
@@ -151,34 +178,182 @@ $routes = [
 ];
 
 
-$adminOnlyPrefixes = ['/users/', '/projects/', '/documents/', '/logs/', '/web-of-influence/', '/prequalifications/', '/surveys/admin/', '/email-templates/', '/audit/', '/reports/', '/settings/'];
-$adminOnlyExact = [
-    '/auth/invite-user',
-    '/reports',
-    '/references/project-cities',
-    '/references/tender-sections',
-    '/references/project-options',
-    '/lookups/projects',
-    '/lookups/documents',
-    '/lookups/tender-sections',
-];
+function routePermissionForPath(string $path): string|array|null
+{
+    $exact = [
+        '/dashboard/overview' => 'dashboard.view',
+        '/dashboard/pms' => 'dashboard.view',
+        '/search/global' => 'global_search.use',
+        '/notifications/list' => 'notifications.view',
+        '/notifications/mark-read' => 'notifications.view',
+        '/notifications/mark-all-read' => 'notifications.view',
+        '/notifications/delete' => 'notifications.view',
+        '/notifications/clear-read' => 'notifications.view',
 
-$requiresAdminWorkspace = in_array($relativePath, $adminOnlyExact, true);
-foreach ($adminOnlyPrefixes as $prefix) {
-    if (str_starts_with($relativePath, $prefix)) {
-        $requiresAdminWorkspace = true;
-        break;
+        '/auth/invite-user' => 'users.invite',
+        '/users/list' => 'users.view',
+        '/users/pms-admins' => ['users.invite', 'users.edit'],
+        '/users/update' => 'users.edit',
+        '/users/bulk-update' => 'users.edit',
+        '/users/activate' => 'users.status',
+        '/users/deactivate' => 'users.status',
+        '/users/reset-password' => 'users.reset',
+        '/users/export' => 'users.export',
+        '/users/permissions' => 'users.view',
+
+        '/clients/list' => 'clients.view',
+        '/clients/show' => 'clients.view',
+        '/clients/create' => 'clients.create',
+        '/clients/update' => 'clients.edit',
+        '/clients/activate' => 'clients.edit',
+        '/clients/delete' => 'clients.delete',
+        '/clients/bulk-update' => 'clients.edit',
+        '/clients/export' => 'clients.export',
+
+        '/keypersons/list' => 'keypersons.view',
+        '/keypersons/show' => 'keypersons.view',
+        '/keypersons/create' => 'keypersons.create',
+        '/keypersons/update' => 'keypersons.edit',
+        '/keypersons/activate' => 'keypersons.edit',
+        '/keypersons/delete' => 'keypersons.delete',
+        '/keypersons/bulk-update' => 'keypersons.edit',
+        '/keypersons/export' => 'keypersons.export',
+
+        '/gift-lists/list' => 'gift_lists.view',
+        '/gift-lists/show' => 'gift_lists.view',
+        '/gift-lists/create' => 'gift_lists.create',
+        '/gift-lists/update' => 'gift_lists.edit',
+        '/gift-lists/update-item' => 'gift_lists.edit',
+        '/gift-lists/add-keypersons' => 'gift_lists.edit',
+        '/gift-lists/delete' => 'gift_lists.delete',
+        '/gift-lists/bulk-delete' => 'gift_lists.delete',
+        '/gift-lists/export' => 'gift_lists.export',
+
+        '/tenders/list' => 'tenders.view',
+        '/tenders/show' => 'tenders.view',
+        '/tenders/create' => 'tenders.create',
+        '/tenders/update' => 'tenders.edit',
+        '/tenders/delete' => 'tenders.delete',
+        '/tenders/bulk-delete' => 'tenders.delete',
+        '/tenders/export' => 'tenders.export',
+
+        '/documents/list' => 'documents.view',
+        '/documents/show' => 'documents.view',
+        '/documents/file' => 'documents.view',
+        '/documents/revisions/list' => 'documents.view',
+        '/documents/revisions/create' => 'documents.revisions',
+        '/documents/revisions/replace' => 'documents.revisions',
+        '/documents/revisions/set-current' => 'documents.revisions',
+        '/documents/shares/list' => 'documents.share',
+        '/documents/shares/create' => 'documents.share',
+        '/documents/shares/update' => 'documents.share',
+        '/documents/shares/revoke' => 'documents.share',
+        '/documents/options' => 'documents.view',
+        '/documents/create' => 'documents.create',
+        '/documents/update' => 'documents.edit',
+        '/documents/delete' => 'documents.delete',
+        '/documents/bulk-delete' => 'documents.delete',
+        '/documents/export' => 'documents.export',
+
+        '/prequalifications/list' => 'prequalifications.view',
+        '/prequalifications/show' => 'prequalifications.view',
+        '/prequalifications/create' => 'prequalifications.create',
+        '/prequalifications/update' => 'prequalifications.edit',
+        '/prequalifications/delete' => 'prequalifications.delete',
+        '/prequalifications/bulk-delete' => 'prequalifications.delete',
+        '/prequalifications/export' => 'prequalifications.export',
+
+        '/submission-register/options' => 'submission_register.view',
+        '/submission-register/list' => 'submission_register.view',
+        '/submission-register/overview' => 'submission_register.view',
+        '/submission-register/show' => 'submission_register.view',
+        '/submission-register/pdf' => 'submission_register.pdf',
+        '/submission-register/create' => 'submission_register.create',
+        '/submission-register/update' => 'submission_register.edit',
+        '/submission-register/delete' => 'submission_register.delete',
+        '/submission-register/export' => 'submission_register.export',
+        '/submission-register/updates/list' => 'submission_register.view',
+        '/submission-register/updates/create' => 'submission_register.comment',
+        '/submission-register/updates/update' => 'submission_register.comment',
+        '/submission-register/updates/delete' => 'submission_register.comment',
+
+        '/surveys/admin/list' => 'client_surveys.view',
+        '/surveys/admin/show' => 'client_surveys.view',
+        '/surveys/admin/delete' => 'client_surveys.delete',
+        '/surveys/admin/export' => 'client_surveys.export',
+        '/surveys/admin/invitations/list' => 'client_surveys.view',
+        '/surveys/admin/invitations/create' => 'client_surveys.create',
+        '/surveys/admin/invitations/revoke' => 'client_surveys.delete',
+
+        '/logs/list' => 'influence_logs.view',
+        '/logs/create' => 'influence_logs.create',
+        '/logs/update' => 'influence_logs.edit',
+        '/logs/delete' => 'influence_logs.delete',
+        '/logs/bulk-delete' => 'influence_logs.delete',
+        '/logs/export' => 'influence_logs.export',
+
+        '/web-of-influence/list' => 'web_of_influence.view',
+        '/web-of-influence/show' => 'web_of_influence.view',
+        '/web-of-influence/options' => 'web_of_influence.view',
+        '/web-of-influence/create' => 'web_of_influence.create',
+        '/web-of-influence/update' => 'web_of_influence.edit',
+        '/web-of-influence/delete' => 'web_of_influence.delete',
+        '/web-of-influence/bulk-delete' => 'web_of_influence.delete',
+        '/web-of-influence/export' => 'web_of_influence.export',
+
+        '/projects/list' => 'tenders.view',
+        '/projects/show' => 'tenders.view',
+        '/projects/create' => 'tenders.create',
+        '/projects/update' => 'tenders.edit',
+        '/projects/delete' => 'tenders.delete',
+        '/projects/bulk-delete' => 'tenders.delete',
+        '/projects/bulk-update-status' => 'tenders.edit',
+        '/projects/export' => 'tenders.export',
+
+        '/reports/overview' => 'reports.view',
+        '/reports/export' => 'reports.export',
+        '/email-templates/list' => 'email_templates.view',
+        '/email-templates/preview' => 'email_templates.view',
+        '/email-templates/send-test' => 'email_templates.test',
+        '/settings/overview' => 'settings.view',
+        '/settings/update' => 'settings.manage',
+        '/audit/list' => 'audit.view',
+        '/audit/export-csv' => 'audit.export',
+
+        '/lookups/clients' => 'clients.view',
+        '/lookups/keypersons' => 'keypersons.view',
+        '/lookups/projects' => ['tenders.view', 'documents.view', 'prequalifications.view', 'web_of_influence.view'],
+        '/lookups/documents' => 'documents.view',
+        '/lookups/users' => 'users.view',
+        '/lookups/pms-admins' => ['users.invite', 'users.edit'],
+        '/lookups/tender-sections' => 'tenders.view',
+        '/references/project-cities' => ['tenders.view', 'prequalifications.view'],
+        '/references/tender-sections' => 'tenders.view',
+        '/references/project-options' => ['tenders.view', 'prequalifications.view'],
+    ];
+
+    return $exact[$path] ?? null;
+}
+
+function requireRoutePermissionIfNeeded(mysqli $conn, string $path): void
+{
+    $required = routePermissionForPath($path);
+    if ($required === null) {
+        return;
     }
+
+    $routeUser = authenticateUser();
+    $requiredPermissions = is_array($required) ? $required : [$required];
+    foreach ($requiredPermissions as $permission) {
+        if (userHasPermission($conn, $routeUser, $permission)) {
+            return;
+        }
+    }
+
+    throw new RuntimeException('You are not authorised to access this workspace area.', 403);
 }
 
-if ($requiresAdminWorkspace) {
-    $routeUser = authenticateUser();
-    requireRole(
-        $routeUser,
-        [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN],
-        'This route is only available to Super Admins and Admins.'
-    );
-}
+requireRoutePermissionIfNeeded($conn, $relativePath);
 
 if (array_key_exists($relativePath, $routes)) {
     $target = $routes[$relativePath];

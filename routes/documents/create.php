@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../includes/audit.php';
 requireMethod('POST');
 $authUser = authenticateUser();
 requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN], 'Only Super Admins and Admins can upload documents.');
+assertDocumentRevisionSchema($conn);
 
 $form = documentFormPayload($conn, $_POST);
 assertDocumentTitleAvailable($conn, $form['document_title'], $form['document_type']);
@@ -15,10 +16,15 @@ if (!documentUploadWasProvided()) {
     throw new RuntimeException('Please select a document to upload.', 422);
 }
 
+$revisionCode = normaliseDocumentRevisionCode($_POST['revision_code'] ?? '', 1);
+$revisionNotes = normaliseDocumentRevisionNotes($_POST['revision_notes'] ?? $form['updated_content']);
 $file = storeDocumentUpload($_FILES['document']);
 $actorId = (int) $authUser['id'];
 $actorEmail = actorEmail($authUser);
+$documentId = 0;
+$revision = null;
 
+$conn->begin_transaction();
 try {
     $stmt = dbExecute(
         $conn,
@@ -31,7 +37,7 @@ try {
         'ssssssssssiiissssisiii',
         [
             $form['document_title'], $form['document_type'], $form['presentation_code'], $form['document_category'],
-            $form['updated_content'], $file['stored_name'], $actorEmail, $actorEmail, $form['description'],
+            $revisionNotes, $file['stored_name'], $actorEmail, $actorEmail, $form['description'],
             $form['relationship_type'], $form['project_code'], $form['client_id'], $form['keyperson_id'],
             $file['original_name'], $file['storage_path'], $file['mime_type'], $file['file_extension'],
             $file['file_size'], $file['checksum_sha256'], 1, $actorId, $actorId,
@@ -39,7 +45,21 @@ try {
     );
     $documentId = (int) $stmt->insert_id;
     $stmt->close();
+
+    lockDocumentForRevision($conn, $documentId);
+    $revision = insertDocumentRevisionRecord(
+        $conn,
+        $documentId,
+        $revisionCode,
+        $revisionNotes,
+        $file,
+        $authUser,
+        true
+    );
+
+    $conn->commit();
 } catch (Throwable $exception) {
+    $conn->rollback();
     removeManagedDocumentFile($file['absolute_path']);
     throw $exception;
 }
@@ -50,6 +70,8 @@ writeAuditLog($conn, $authUser, 'document.created', 'document', $documentId, [
     'category' => $form['document_category'],
     'relationship_type' => $form['relationship_type'],
     'relationship_label' => $form['relationship_label'],
+    'revision_id' => $revision['id'] ?? null,
+    'revision_code' => $revisionCode,
     'original_name' => $file['original_name'],
     'file_size' => $file['file_size'],
 ]);
@@ -57,6 +79,6 @@ writeAuditLog($conn, $authUser, 'document.created', 'document', $documentId, [
 $document = assertDocumentAccessible($conn, $authUser, $documentId);
 jsonResponse([
     'status' => 'Success',
-    'message' => 'Document uploaded successfully.',
-    'data' => documentResponsePayload($document),
+    'message' => 'Document and initial revision uploaded successfully.',
+    'data' => documentDetailResponsePayload($conn, $document),
 ], 201);

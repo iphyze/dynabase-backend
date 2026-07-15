@@ -6,7 +6,7 @@ require_once __DIR__ . '/dbHelpers.php';
 
 function isGlobalDataUser(array $authUser): bool
 {
-    return userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
+    return userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_USER]);
 }
 
 function resolveAssignableOwnerPmsAdminId(mysqli $conn, array $authUser, ?int $requestedOwnerPmsAdminId = null): ?int

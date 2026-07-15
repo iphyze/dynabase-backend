@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../includes/documents.php';
 requireMethod('GET');
 $authUser = authenticateUser();
 requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN], 'Only Super Admins and Admins can access Documents.');
+assertDocumentRevisionSchema($conn);
 
 $categories = dbFetchAll(
     $conn,
@@ -89,5 +90,7 @@ jsonResponse([
         'allowed_extensions' => array_keys(documentAllowedExtensions()),
         'previewable_extensions' => documentPreviewableExtensions(),
         'max_upload_bytes' => documentMaxUploadBytes(),
+        'revision_code_example' => 'Rev101',
+        'revision_code_max_length' => 50,
     ],
 ]);

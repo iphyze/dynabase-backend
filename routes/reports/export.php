@@ -15,22 +15,14 @@ requireRole(
 );
 
 $type = strtolower(cleanString($_GET['type'] ?? ''));
-$allowedTypes = [
-    'gift-lists',
-    'tenders',
-    'clients',
-    'keypersons',
-    'pms-ownership',
-    'client-surveys',
-    'prequalifications',
-    'documents',
-];
-if (!in_array($type, $allowedTypes, true)) {
+if (!in_array($type, dynabaseReportKnownTypes(), true)) {
     throw new RuntimeException('Please choose a valid report type.', 422);
 }
 
+dynabaseReportRequireExportAccess($conn, $authUser, $type);
+
 $giftYear = dynabaseReportYearFilter($_GET['year'] ?? 'all');
-$sheets = dynabaseReportWorkbook($conn, $type, $giftYear);
+$sheets = dynabaseReportWorkbook($conn, $type, $giftYear, $authUser);
 if ($sheets === []) {
     throw new RuntimeException('This report is not available because its module has not been configured yet.', 409);
 }
@@ -41,6 +33,8 @@ writeAuditLog($conn, $authUser, 'report.exported', 'report', $type, [
     'selected_year' => $giftYear > 0 ? $giftYear : 'all',
     'filename' => $filename,
     'worksheet_count' => count($sheets),
+    'module_view_permission' => dynabaseReportAccessRules()[$type]['view'] ?? null,
+    'module_export_permission' => dynabaseReportAccessRules()[$type]['export'] ?? null,
 ]);
 
 dynabaseOutputXlsx($filename, $sheets, [

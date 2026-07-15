@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../includes/pagination.php';
 requireMethod('GET');
 $authUser = authenticateUser();
 requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN], 'Only Super Admins and Admins can access Documents.');
+assertDocumentRevisionSchema($conn);
 
 [$page, $limit, $offset] = paginationParams();
 $search = cleanString($_GET['search'] ?? $_GET['q'] ?? '');
@@ -23,10 +24,10 @@ $types = '';
 $params = [];
 
 if ($search !== '') {
-    $where .= ' AND (d.document_title LIKE ? OR d.presentation_code LIKE ? OR d.document_category LIKE ? OR d.updated_content LIKE ? OR d.original_name LIKE ?)';
+    $where .= ' AND (d.document_title LIKE ? OR d.presentation_code LIKE ? OR d.document_category LIKE ? OR d.updated_content LIKE ? OR d.original_name LIKE ? OR EXISTS (SELECT 1 FROM document_revisions rs WHERE rs.document_id = d.id AND rs.record_status <> \'deleted\' AND (rs.revision_code LIKE ? OR rs.original_name LIKE ? OR rs.revision_notes LIKE ?)))';
     $like = '%' . $search . '%';
-    $types .= 'sssss';
-    array_push($params, $like, $like, $like, $like, $like);
+    $types .= 'ssssssss';
+    array_push($params, $like, $like, $like, $like, $like, $like, $like, $like);
 }
 if ($documentType !== '' && $documentType !== 'all') {
     $documentType = normaliseDocumentType($documentType);
@@ -46,7 +47,7 @@ if ($relationshipType !== '' && $relationshipType !== 'all') {
     $params[] = $relationshipType;
 }
 if ($fileExtension !== '' && $fileExtension !== 'all') {
-    if (!array_key_exists($fileExtension, documentAllowedExtensions())) {
+    if (!preg_match('/^[a-z0-9]{1,20}$/', $fileExtension)) {
         throw new RuntimeException('Invalid file-type filter.', 422);
     }
     $where .= ' AND d.file_extension = ?';
@@ -82,7 +83,10 @@ $rows = dbFetchAll(
             updater.email AS updater_email,
             p.project_title AS linked_project_title, p.tender_code AS linked_tender_code,
             c.clients_name AS linked_client_name,
-            k.key_person AS linked_keyperson_name, k.clients_name AS linked_keyperson_client
+            k.key_person AS linked_keyperson_name, k.clients_name AS linked_keyperson_client,
+            (SELECT COUNT(*) FROM document_revisions rc WHERE rc.document_id = d.id AND rc.record_status = 'active') AS revision_count,
+            (SELECT cr.id FROM document_revisions cr WHERE cr.document_id = d.id AND cr.record_status = 'active' AND cr.is_current = 1 ORDER BY cr.id DESC LIMIT 1) AS current_revision_id,
+            (SELECT cr.revision_code FROM document_revisions cr WHERE cr.document_id = d.id AND cr.record_status = 'active' AND cr.is_current = 1 ORDER BY cr.id DESC LIMIT 1) AS current_revision_code
      {$from}{$where}
      ORDER BY {$orderBy} {$order}, d.id DESC
      LIMIT ? OFFSET ?",

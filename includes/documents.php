@@ -7,6 +7,7 @@ require_once __DIR__ . '/ownership.php';
 
 const DYNABASE_DOCUMENT_TYPES = ['Profile', 'Presentation', 'Tender'];
 const DYNABASE_DOCUMENT_RELATIONSHIPS = ['general', 'tender', 'client', 'keyperson'];
+const DYNABASE_DOCUMENT_REVISION_STATUSES = ['active', 'replaced', 'deleted'];
 
 function documentMaxUploadBytes(): int
 {
@@ -14,29 +15,26 @@ function documentMaxUploadBytes(): int
     return max(1, min($configuredMb, 100)) * 1024 * 1024;
 }
 
+/**
+ * Uploads are intentionally limited to the business document formats requested
+ * for the Documents workspace. Existing legacy files remain deliverable.
+ */
 function documentAllowedExtensions(): array
 {
     return [
-        'pdf' => ['application/pdf'],
-        'doc' => ['application/msword', 'application/octet-stream'],
-        'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip', 'application/octet-stream'],
-        'xls' => ['application/vnd.ms-excel', 'application/octet-stream'],
-        'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip', 'application/octet-stream'],
-        'ppt' => ['application/vnd.ms-powerpoint', 'application/octet-stream'],
-        'pptx' => ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/zip', 'application/octet-stream'],
-        'txt' => ['text/plain', 'application/octet-stream'],
-        'csv' => ['text/csv', 'text/plain', 'application/vnd.ms-excel', 'application/octet-stream'],
-        'zip' => ['application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
-        'rar' => ['application/vnd.rar', 'application/x-rar-compressed', 'application/octet-stream'],
-        'jpg' => ['image/jpeg'],
-        'jpeg' => ['image/jpeg'],
-        'png' => ['image/png'],
-        'webp' => ['image/webp'],
+        'pdf' => ['application/pdf', 'application/octet-stream'],
+        'doc' => ['application/msword', 'application/x-ole-storage', 'application/cdfv2', 'application/octet-stream'],
+        'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+        'xls' => ['application/vnd.ms-excel', 'application/x-ole-storage', 'application/cdfv2', 'application/octet-stream'],
+        'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+        'ppt' => ['application/vnd.ms-powerpoint', 'application/x-ole-storage', 'application/cdfv2', 'application/octet-stream'],
+        'pptx' => ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
     ];
 }
 
 function documentPreviewableExtensions(): array
 {
+    // Preserve preview support for legacy files already stored in Dynabase.
     return ['pdf', 'txt', 'csv', 'jpg', 'jpeg', 'png', 'webp'];
 }
 
@@ -128,6 +126,66 @@ function documentUploadWasProvided(string $field = 'document'): bool
         && (int) ($_FILES[$field]['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE;
 }
 
+function documentFileStartsWith(string $path, string $signature): bool
+{
+    $handle = @fopen($path, 'rb');
+    if ($handle === false) {
+        return false;
+    }
+    $bytes = fread($handle, strlen($signature));
+    fclose($handle);
+    return $bytes === $signature;
+}
+
+function documentValidateOoxmlPackage(string $path, string $extension): bool
+{
+    if (!documentFileStartsWith($path, "PK\x03\x04")) {
+        return false;
+    }
+
+    if (!class_exists('ZipArchive')) {
+        return true;
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) {
+        return false;
+    }
+
+    $requiredDirectory = match ($extension) {
+        'docx' => 'word/',
+        'xlsx' => 'xl/',
+        'pptx' => 'ppt/',
+        default => '',
+    };
+    $hasContentTypes = $zip->locateName('[Content_Types].xml', ZipArchive::FL_NOCASE) !== false;
+    $hasFormatDirectory = false;
+    for ($index = 0; $index < $zip->numFiles; $index++) {
+        $name = (string) $zip->getNameIndex($index);
+        if ($requiredDirectory !== '' && str_starts_with(strtolower($name), $requiredDirectory)) {
+            $hasFormatDirectory = true;
+            break;
+        }
+    }
+    $zip->close();
+
+    return $hasContentTypes && $hasFormatDirectory;
+}
+
+function documentValidateUploadSignature(string $path, string $extension): bool
+{
+    if ($extension === 'pdf') {
+        return documentFileStartsWith($path, '%PDF-');
+    }
+    if (in_array($extension, ['doc', 'xls', 'ppt'], true)) {
+        return documentFileStartsWith($path, "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1");
+    }
+    if (in_array($extension, ['docx', 'xlsx', 'pptx'], true)) {
+        return documentValidateOoxmlPackage($path, $extension);
+    }
+    return false;
+}
+
 function storeDocumentUpload(array $file): array
 {
     $error = (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE);
@@ -153,7 +211,7 @@ function storeDocumentUpload(array $file): array
     $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
     $allowed = documentAllowedExtensions();
     if ($extension === '' || !array_key_exists($extension, $allowed)) {
-        throw new RuntimeException('Unsupported file type. Use PDF, Office, text, CSV, ZIP, RAR, JPG, PNG or WEBP files.', 422);
+        throw new RuntimeException('Unsupported file type. Upload a PDF, Word, PowerPoint or Excel document.', 422);
     }
 
     $tmpName = (string) ($file['tmp_name'] ?? '');
@@ -165,6 +223,9 @@ function storeDocumentUpload(array $file): array
     $mimeType = strtolower((string) ($finfo->file($tmpName) ?: 'application/octet-stream'));
     if (!in_array($mimeType, $allowed[$extension], true)) {
         throw new RuntimeException('The uploaded file content does not match its extension.', 422);
+    }
+    if (!documentValidateUploadSignature($tmpName, $extension)) {
+        throw new RuntimeException('The uploaded document is not a valid ' . strtoupper($extension) . ' file.', 422);
     }
 
     $year = date('Y');
@@ -370,7 +431,10 @@ function assertDocumentAccessible(mysqli $conn, array $authUser, int $documentId
                 updater.email AS updater_email,
                 p.project_title AS linked_project_title, p.tender_code AS linked_tender_code,
                 c.clients_name AS linked_client_name,
-                k.key_person AS linked_keyperson_name, k.clients_name AS linked_keyperson_client
+                k.key_person AS linked_keyperson_name, k.clients_name AS linked_keyperson_client,
+                (SELECT COUNT(*) FROM document_revisions rc WHERE rc.document_id = d.id AND rc.record_status = 'active') AS revision_count,
+                (SELECT cr.id FROM document_revisions cr WHERE cr.document_id = d.id AND cr.record_status = 'active' AND cr.is_current = 1 ORDER BY cr.id DESC LIMIT 1) AS current_revision_id,
+                (SELECT cr.revision_code FROM document_revisions cr WHERE cr.document_id = d.id AND cr.record_status = 'active' AND cr.is_current = 1 ORDER BY cr.id DESC LIMIT 1) AS current_revision_code
          FROM document_table d
          LEFT JOIN users creator ON creator.id = d.created_by_id
          LEFT JOIN users updater ON updater.id = d.updated_by_id
@@ -438,6 +502,9 @@ function documentResponsePayload(array $row): array
         'file_size' => (int) ($row['file_size'] ?? 0),
         'checksum_sha256' => $row['checksum_sha256'] ?? '',
         'version_no' => max(1, (int) ($row['version_no'] ?? 1)),
+        'revision_count' => max(0, (int) ($row['revision_count'] ?? 0)),
+        'current_revision_id' => isset($row['current_revision_id']) && $row['current_revision_id'] !== null ? (int) $row['current_revision_id'] : null,
+        'current_revision_code' => trim((string) ($row['current_revision_code'] ?? '')) ?: null,
         'previewable' => in_array($extension, documentPreviewableExtensions(), true),
         'file_available' => $absolutePath !== null,
         'is_legacy' => str_starts_with((string) ($row['storage_path'] ?? ''), 'legacy/'),
@@ -466,4 +533,344 @@ function parseDocumentIds(array $payload): array
         throw new RuntimeException('You can update at most 100 documents at once.', 422);
     }
     return $ids;
+}
+
+function documentRevisionTableExists(mysqli $conn): bool
+{
+    $row = dbFetchOne(
+        $conn,
+        "SELECT 1 AS available
+         FROM information_schema.tables
+         WHERE table_schema = DATABASE() AND table_name = 'document_revisions'
+         LIMIT 1"
+    );
+    return $row !== null;
+}
+
+function assertDocumentRevisionSchema(mysqli $conn): void
+{
+    if (!documentRevisionTableExists($conn)) {
+        throw new RuntimeException('Document revision storage is not installed. Apply the Documents revision migration and try again.', 409);
+    }
+
+    $requiredColumns = [
+        'id', 'document_id', 'revision_code', 'revision_no', 'revision_notes', 'original_name', 'stored_name',
+        'storage_path', 'mime_type', 'file_extension', 'file_size', 'checksum_sha256', 'preview_file_path',
+        'is_current', 'record_status', 'replaces_revision_id', 'uploaded_by_id', 'uploaded_by', 'uploaded_at',
+        'replaced_at',
+    ];
+    $rows = dbFetchAll(
+        $conn,
+        "SELECT COLUMN_NAME AS column_name
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE() AND table_name = 'document_revisions'"
+    );
+    $available = array_map(static fn (array $row): string => strtolower((string) $row['column_name']), $rows);
+    $missing = array_values(array_diff($requiredColumns, $available));
+    if ($missing !== []) {
+        error_log('[Dynabase Documents] Missing document_revisions columns: ' . implode(', ', $missing));
+        throw new RuntimeException('Document revision storage is incomplete. Reapply the Documents revision migration and try again.', 409);
+    }
+}
+
+function documentFormBoolean(mixed $value, bool $default = false): bool
+{
+    if ($value === null || $value === '') {
+        return $default;
+    }
+    if (is_bool($value)) {
+        return $value;
+    }
+    return in_array(strtolower(trim((string) $value)), ['1', 'true', 'yes', 'on'], true);
+}
+
+function normaliseDocumentRevisionCode(mixed $value, ?int $fallbackNo = null): string
+{
+    $code = trim((string) $value);
+    if ($code === '' && $fallbackNo !== null) {
+        $code = 'Rev' . str_pad((string) max(1, $fallbackNo), 3, '0', STR_PAD_LEFT);
+    }
+    if ($code === '') {
+        throw new RuntimeException('Revision code is required.', 422);
+    }
+    if (documentStringLength($code) > 50 || !preg_match('/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,49}$/', $code)) {
+        throw new RuntimeException('Revision code may contain letters, numbers, dots, dashes, underscores or slashes.', 422);
+    }
+    return $code;
+}
+
+function normaliseDocumentRevisionNotes(mixed $value): string
+{
+    $notes = trim((string) $value);
+    if (documentStringLength($notes) > 1000) {
+        throw new RuntimeException('Revision notes must not exceed 1,000 characters.', 422);
+    }
+    return $notes;
+}
+
+function lockDocumentForRevision(mysqli $conn, int $documentId): void
+{
+    $row = dbFetchOne(
+        $conn,
+        "SELECT id FROM document_table WHERE id = ? AND status = 'active' LIMIT 1 FOR UPDATE",
+        'i',
+        [$documentId]
+    );
+    if (!$row) {
+        throw new RuntimeException('Document not found.', 404);
+    }
+}
+
+function nextDocumentRevisionNo(mysqli $conn, int $documentId): int
+{
+    return dbScalarInt(
+        $conn,
+        "SELECT COALESCE(MAX(revision_no), 0) + 1 AS total FROM document_revisions WHERE document_id = ?",
+        'i',
+        [$documentId]
+    );
+}
+
+function assertDocumentRevisionCodeAvailable(mysqli $conn, int $documentId, string $revisionCode): void
+{
+    $row = dbFetchOne(
+        $conn,
+        "SELECT id FROM document_revisions
+         WHERE document_id = ? AND LOWER(TRIM(revision_code)) = LOWER(TRIM(?)) AND record_status = 'active'
+         LIMIT 1",
+        'is',
+        [$documentId, $revisionCode]
+    );
+    if ($row) {
+        throw new RuntimeException('An active revision with this code already exists for the document.', 409);
+    }
+}
+
+function insertDocumentRevisionRecord(
+    mysqli $conn,
+    int $documentId,
+    string $revisionCode,
+    string $revisionNotes,
+    array $file,
+    array $authUser,
+    bool $makeCurrent,
+    ?int $replacesRevisionId = null
+): array {
+    $revisionNo = nextDocumentRevisionNo($conn, $documentId);
+    $actorId = (int) $authUser['id'];
+    $actorEmail = actorEmail($authUser);
+
+    if ($makeCurrent) {
+        dbExecute(
+            $conn,
+            "UPDATE document_revisions SET is_current = 0 WHERE document_id = ? AND record_status = 'active'",
+            'i',
+            [$documentId]
+        )->close();
+    }
+
+    $stmt = dbExecute(
+        $conn,
+        'INSERT INTO document_revisions
+            (document_id, revision_code, revision_no, revision_notes, original_name, stored_name, storage_path,
+             mime_type, file_extension, file_size, checksum_sha256, preview_file_path, is_current, record_status,
+             replaces_revision_id, uploaded_by_id, uploaded_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, "active", ?, ?, ?)',
+        'isissssssisiiis',
+        [
+            $documentId,
+            $revisionCode,
+            $revisionNo,
+            $revisionNotes,
+            $file['original_name'],
+            $file['stored_name'],
+            $file['storage_path'],
+            $file['mime_type'],
+            $file['file_extension'],
+            $file['file_size'],
+            $file['checksum_sha256'],
+            $makeCurrent ? 1 : 0,
+            $replacesRevisionId,
+            $actorId,
+            $actorEmail,
+        ]
+    );
+    $revisionId = (int) $stmt->insert_id;
+    $stmt->close();
+
+    if ($makeCurrent) {
+        syncDocumentCurrentRevision($conn, $documentId, $revisionId, $authUser);
+    } else {
+        dbExecute(
+            $conn,
+            "UPDATE document_table SET updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            'sii',
+            [$actorEmail, $actorId, $documentId]
+        )->close();
+    }
+
+    $revision = fetchDocumentRevision($conn, $revisionId, true);
+    if (!$revision) {
+        throw new RuntimeException('The document revision could not be loaded after upload.', 500);
+    }
+    return $revision;
+}
+
+function syncDocumentCurrentRevision(mysqli $conn, int $documentId, int $revisionId, array $authUser): void
+{
+    $revision = dbFetchOne(
+        $conn,
+        "SELECT * FROM document_revisions WHERE id = ? AND document_id = ? AND record_status = 'active' LIMIT 1",
+        'ii',
+        [$revisionId, $documentId]
+    );
+    if (!$revision) {
+        throw new RuntimeException('The selected revision is unavailable.', 404);
+    }
+    if (resolveDocumentAbsolutePath($revision) === null) {
+        throw new RuntimeException('The selected revision file is unavailable and cannot be made current.', 409);
+    }
+
+    dbExecute(
+        $conn,
+        'UPDATE document_table
+         SET document = ?, original_name = ?, storage_path = ?, mime_type = ?, file_extension = ?, file_size = ?,
+             checksum_sha256 = ?, version_no = ?, updated_content = ?, updated_by = ?, updated_by_id = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status = "active"',
+        'sssssisissii',
+        [
+            $revision['stored_name'],
+            $revision['original_name'],
+            $revision['storage_path'],
+            $revision['mime_type'],
+            $revision['file_extension'],
+            (int) $revision['file_size'],
+            $revision['checksum_sha256'],
+            (int) $revision['revision_no'],
+            $revision['revision_notes'],
+            actorEmail($authUser),
+            (int) $authUser['id'],
+            $documentId,
+        ]
+    )->close();
+}
+
+function fetchDocumentRevision(mysqli $conn, int $revisionId, bool $includeReplaced = true): ?array
+{
+    $statusSql = $includeReplaced ? "r.record_status IN ('active', 'replaced')" : "r.record_status = 'active'";
+    return dbFetchOne(
+        $conn,
+        "SELECT r.*,
+                CONCAT_WS(' ', uploader.first_name, uploader.last_name) AS uploader_name,
+                uploader.email AS uploader_email,
+                replacement.id AS replacement_revision_id
+         FROM document_revisions r
+         LEFT JOIN users uploader ON uploader.id = r.uploaded_by_id
+         LEFT JOIN document_revisions replacement ON replacement.replaces_revision_id = r.id AND replacement.record_status <> 'deleted'
+         WHERE r.id = ? AND {$statusSql}
+         LIMIT 1",
+        'i',
+        [$revisionId]
+    );
+}
+
+function assertDocumentRevisionAccessible(
+    mysqli $conn,
+    array $authUser,
+    int $documentId,
+    int $revisionId,
+    bool $includeReplaced = true
+): array {
+    assertDocumentAccessible($conn, $authUser, $documentId);
+    $statusSql = $includeReplaced ? "r.record_status IN ('active', 'replaced')" : "r.record_status = 'active'";
+    $revision = dbFetchOne(
+        $conn,
+        "SELECT r.*,
+                CONCAT_WS(' ', uploader.first_name, uploader.last_name) AS uploader_name,
+                uploader.email AS uploader_email,
+                replacement.id AS replacement_revision_id
+         FROM document_revisions r
+         LEFT JOIN users uploader ON uploader.id = r.uploaded_by_id
+         LEFT JOIN document_revisions replacement ON replacement.replaces_revision_id = r.id AND replacement.record_status <> 'deleted'
+         WHERE r.id = ? AND r.document_id = ? AND {$statusSql}
+         LIMIT 1",
+        'ii',
+        [$revisionId, $documentId]
+    );
+    if (!$revision) {
+        throw new RuntimeException('Document revision not found.', 404);
+    }
+    return $revision;
+}
+
+function documentRevisionResponsePayload(array $row): array
+{
+    $extension = strtolower((string) ($row['file_extension'] ?? ''));
+    $absolutePath = resolveDocumentAbsolutePath($row);
+    return [
+        'id' => (int) $row['id'],
+        'document_id' => (int) $row['document_id'],
+        'revision_code' => $row['revision_code'],
+        'revision_no' => (int) $row['revision_no'],
+        'revision_notes' => $row['revision_notes'] ?? '',
+        'original_name' => $row['original_name'],
+        'stored_name' => $row['stored_name'],
+        'mime_type' => $row['mime_type'],
+        'file_extension' => $extension,
+        'file_size' => (int) $row['file_size'],
+        'checksum_sha256' => $row['checksum_sha256'],
+        'preview_file_path' => $row['preview_file_path'] ?? null,
+        'previewable' => in_array($extension, documentPreviewableExtensions(), true),
+        'file_available' => $absolutePath !== null,
+        'is_current' => (bool) $row['is_current'],
+        'record_status' => $row['record_status'],
+        'replaces_revision_id' => $row['replaces_revision_id'] !== null ? (int) $row['replaces_revision_id'] : null,
+        'replacement_revision_id' => isset($row['replacement_revision_id']) && $row['replacement_revision_id'] !== null
+            ? (int) $row['replacement_revision_id']
+            : null,
+        'uploaded_by_id' => $row['uploaded_by_id'] !== null ? (int) $row['uploaded_by_id'] : null,
+        'uploaded_by_name' => trim((string) ($row['uploader_name'] ?? '')) ?: ($row['uploader_email'] ?? $row['uploaded_by'] ?? ''),
+        'uploaded_at' => $row['uploaded_at'],
+        'replaced_at' => $row['replaced_at'] ?? null,
+    ];
+}
+
+function documentRevisionRows(mysqli $conn, int $documentId): array
+{
+    return dbFetchAll(
+        $conn,
+        "SELECT r.*,
+                CONCAT_WS(' ', uploader.first_name, uploader.last_name) AS uploader_name,
+                uploader.email AS uploader_email,
+                replacement.id AS replacement_revision_id
+         FROM document_revisions r
+         LEFT JOIN users uploader ON uploader.id = r.uploaded_by_id
+         LEFT JOIN document_revisions replacement ON replacement.replaces_revision_id = r.id AND replacement.record_status <> 'deleted'
+         WHERE r.document_id = ? AND r.record_status IN ('active', 'replaced')
+         ORDER BY r.is_current DESC, r.revision_no DESC, r.id DESC",
+        'i',
+        [$documentId]
+    );
+}
+
+function documentDetailResponsePayload(mysqli $conn, array $row): array
+{
+    $base = documentResponsePayload($row);
+    $revisions = array_map('documentRevisionResponsePayload', documentRevisionRows($conn, (int) $row['id']));
+    $base['revisions'] = $revisions;
+    $base['revision_count'] = count(array_filter(
+        $revisions,
+        static fn (array $revision): bool => $revision['record_status'] === 'active'
+    ));
+    $base['current_revision'] = null;
+    foreach ($revisions as $revision) {
+        if ($revision['record_status'] === 'active' && $revision['is_current']) {
+            $base['current_revision'] = $revision;
+            $base['current_revision_id'] = $revision['id'];
+            $base['current_revision_code'] = $revision['revision_code'];
+            break;
+        }
+    }
+    return $base;
 }

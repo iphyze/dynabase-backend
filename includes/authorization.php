@@ -6,12 +6,14 @@ require_once __DIR__ . '/authMiddleware.php';
 const DYNABASE_ROLE_SUPER_ADMIN = 'super_admin';
 const DYNABASE_ROLE_ADMIN = 'admin';
 const DYNABASE_ROLE_PMS_ADMIN = 'pms_admin';
+const DYNABASE_ROLE_PMS_USER = 'pms_user';
 const DYNABASE_ROLE_USER = 'user';
 
 const DYNABASE_ROLES = [
     DYNABASE_ROLE_SUPER_ADMIN,
     DYNABASE_ROLE_ADMIN,
     DYNABASE_ROLE_PMS_ADMIN,
+    DYNABASE_ROLE_PMS_USER,
     DYNABASE_ROLE_USER,
 ];
 
@@ -33,7 +35,7 @@ function userActsAsPmsAdmin(array $user): bool
 
 function isPmsWorkspaceUser(array $user): bool
 {
-    return userHasRole($user, [DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_USER]);
+    return userHasRole($user, [DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER]);
 }
 
 function requireRole(array $user, array $roles, string $message = 'You are not authorised to perform this action.'): void
@@ -49,8 +51,8 @@ function canInviteRole(array $actor, string $targetRole): bool
 
     return match ($actorRole) {
         DYNABASE_ROLE_SUPER_ADMIN => in_array($targetRole, DYNABASE_ROLES, true),
-        DYNABASE_ROLE_ADMIN => in_array($targetRole, [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_USER], true),
-        DYNABASE_ROLE_PMS_ADMIN => $targetRole === DYNABASE_ROLE_USER,
+        DYNABASE_ROLE_ADMIN => in_array($targetRole, [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER, DYNABASE_ROLE_USER], true),
+        DYNABASE_ROLE_PMS_ADMIN => $targetRole === DYNABASE_ROLE_PMS_USER,
         default => false,
     };
 }
@@ -59,7 +61,7 @@ function resolveParentPmsAdminIdForInvite(mysqli $conn, array $actor, string $ta
 {
     $actorRole = userRole($actor);
 
-    if ($targetRole !== DYNABASE_ROLE_USER) {
+    if ($targetRole !== DYNABASE_ROLE_PMS_USER) {
         return null;
     }
 
@@ -92,7 +94,7 @@ function resolveOwnerPmsAdminId(array $authUser): ?int
         return (int) $authUser['id'];
     }
 
-    if (userRole($authUser) === DYNABASE_ROLE_USER) {
+    if (userRole($authUser) === DYNABASE_ROLE_PMS_USER) {
         return isset($authUser['parent_pms_admin_id']) && $authUser['parent_pms_admin_id']
             ? (int) $authUser['parent_pms_admin_id']
             : null;
@@ -103,7 +105,7 @@ function resolveOwnerPmsAdminId(array $authUser): ?int
 
 function canViewUserList(array $actor): bool
 {
-    return userHasRole($actor, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
+    return userHasRole($actor, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN]);
 }
 
 function canManageUserStatus(array $actor, array $target): bool
@@ -120,11 +122,11 @@ function canManageUserStatus(array $actor, array $target): bool
     }
 
     if ($actorRole === DYNABASE_ROLE_ADMIN) {
-        return in_array($targetRole, [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_USER], true);
+        return in_array($targetRole, [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER, DYNABASE_ROLE_USER], true);
     }
 
     if ($actorRole === DYNABASE_ROLE_PMS_ADMIN) {
-        return $targetRole === DYNABASE_ROLE_USER
+        return $targetRole === DYNABASE_ROLE_PMS_USER
             && (int) ($target['parent_pms_admin_id'] ?? 0) === (int) $actor['id'];
     }
 
@@ -156,11 +158,11 @@ function canUpdateUserProfile(array $actor, array $target): bool
     }
 
     if ($actorRole === DYNABASE_ROLE_ADMIN) {
-        return in_array($targetRole, [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_USER], true);
+        return in_array($targetRole, [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER, DYNABASE_ROLE_USER], true);
     }
 
     if ($actorRole === DYNABASE_ROLE_PMS_ADMIN) {
-        return $targetRole === DYNABASE_ROLE_USER
+        return $targetRole === DYNABASE_ROLE_PMS_USER
             && (int) ($target['parent_pms_admin_id'] ?? 0) === (int) $actor['id'];
     }
 
@@ -171,8 +173,8 @@ function allowedManagedRoles(array $actor): array
 {
     return match (userRole($actor)) {
         DYNABASE_ROLE_SUPER_ADMIN => DYNABASE_ROLES,
-        DYNABASE_ROLE_ADMIN => [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_USER],
-        DYNABASE_ROLE_PMS_ADMIN => [DYNABASE_ROLE_USER],
+        DYNABASE_ROLE_ADMIN => [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER, DYNABASE_ROLE_USER],
+        DYNABASE_ROLE_PMS_ADMIN => [DYNABASE_ROLE_PMS_USER],
         default => [],
     };
 }
@@ -195,7 +197,7 @@ function buildPmsOwnershipWhereClause(array $authUser, string $tableAlias = ''):
     $prefix = $tableAlias !== '' ? $tableAlias . '.' : '';
     $role = userRole($authUser);
 
-    if ($role === DYNABASE_ROLE_SUPER_ADMIN || $role === DYNABASE_ROLE_ADMIN) {
+    if ($role === DYNABASE_ROLE_SUPER_ADMIN || $role === DYNABASE_ROLE_ADMIN || $role === DYNABASE_ROLE_USER) {
         return ['', []];
     }
 
@@ -203,7 +205,7 @@ function buildPmsOwnershipWhereClause(array $authUser, string $tableAlias = ''):
         return [" AND {$prefix}owner_pms_admin_id = ?", [(int) $authUser['id']]];
     }
 
-    if ($role === DYNABASE_ROLE_USER) {
+    if ($role === DYNABASE_ROLE_PMS_USER) {
         $ownerPmsAdminId = (int) ($authUser['parent_pms_admin_id'] ?? 0);
         if ($ownerPmsAdminId <= 0) {
             return [' AND 1 = 0', []];

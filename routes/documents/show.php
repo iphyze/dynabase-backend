@@ -6,6 +6,8 @@ require_once __DIR__ . '/../../includes/documents.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
+assertDocumentRevisionSchema($conn);
+
 $id = (int) ($_GET['id'] ?? 0);
 if ($id <= 0) {
     throw new RuntimeException('Document ID is required.', 422);
@@ -15,5 +17,5 @@ $document = assertDocumentAccessible($conn, $authUser, $id);
 jsonResponse([
     'status' => 'Success',
     'message' => 'Document retrieved successfully.',
-    'data' => documentResponsePayload($document),
+    'data' => documentDetailResponsePayload($conn, $document),
 ]);

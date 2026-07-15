@@ -4,6 +4,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/dbHelpers.php';
 require_once __DIR__ . '/xlsxReport.php';
 require_once __DIR__ . '/tenderAnalytics.php';
+require_once __DIR__ . '/permissions.php';
+require_once __DIR__ . '/ownership.php';
 
 function dynabaseReportTableExists(mysqli $conn, string $table): bool
 {
@@ -27,6 +29,15 @@ function dynabaseReportColumnExists(mysqli $conn, string $table, string $column)
     return (int) ($row['total'] ?? 0) > 0;
 }
 
+function dynabaseReportTableHasColumns(mysqli $conn, string $table, array $columns): bool
+{
+    if (!dynabaseReportTableExists($conn, $table)) return false;
+    foreach ($columns as $column) {
+        if (!dynabaseReportColumnExists($conn, $table, (string) $column)) return false;
+    }
+    return true;
+}
+
 function dynabaseReportCleanLabel(mixed $value, string $fallback = 'Not specified'): string
 {
     $label = trim((string) $value);
@@ -44,6 +55,58 @@ function dynabaseReportYearFilter(mixed $value): int
         throw new RuntimeException('Please choose a valid report year.', 422);
     }
     return $year;
+}
+
+function dynabaseReportAccessRules(): array
+{
+    return [
+        'gift-lists' => ['view' => 'gift_lists.view', 'export' => 'gift_lists.export'],
+        'tenders' => ['view' => 'tenders.view', 'export' => 'tenders.export'],
+        'clients' => ['view' => 'clients.view', 'export' => 'clients.export'],
+        'keypersons' => ['view' => 'keypersons.view', 'export' => 'keypersons.export'],
+        'pms-ownership' => ['view' => 'users.view', 'export' => 'users.export'],
+        'client-surveys' => ['view' => 'client_surveys.view', 'export' => 'client_surveys.export'],
+        'prequalifications' => ['view' => 'prequalifications.view', 'export' => 'prequalifications.export'],
+        'submission-register' => ['view' => 'submission_register.view', 'export' => 'submission_register.export'],
+        'documents' => ['view' => 'documents.view', 'export' => 'documents.export'],
+    ];
+}
+
+function dynabaseReportKnownTypes(): array
+{
+    return array_keys(dynabaseReportAccessRules());
+}
+
+function dynabaseReportAccessForUser(mysqli $conn, array $authUser, string $type, ?array $effectivePermissions = null): array
+{
+    $rules = dynabaseReportAccessRules();
+    if (!isset($rules[$type])) {
+        return ['can_view' => false, 'can_export' => false, 'view_permission' => null, 'export_permission' => null];
+    }
+
+    $effectivePermissions ??= userEffectivePermissions($conn, $authUser);
+    $viewPermission = $rules[$type]['view'];
+    $exportPermission = $rules[$type]['export'];
+    $canViewReports = in_array('reports.view', $effectivePermissions, true);
+    $canExportReports = in_array('reports.export', $effectivePermissions, true);
+
+    return [
+        'can_view' => $canViewReports && in_array($viewPermission, $effectivePermissions, true),
+        'can_export' => $canExportReports && in_array($exportPermission, $effectivePermissions, true),
+        'view_permission' => $viewPermission,
+        'export_permission' => $exportPermission,
+    ];
+}
+
+function dynabaseReportRequireExportAccess(mysqli $conn, array $authUser, string $type): void
+{
+    $access = dynabaseReportAccessForUser($conn, $authUser, $type);
+    if (!$access['can_view']) {
+        throw new RuntimeException('You do not have access to the records used by this report.', 403);
+    }
+    if (!$access['can_export']) {
+        throw new RuntimeException('You do not have permission to export this report.', 403);
+    }
 }
 
 function dynabaseReportAvailableGiftYears(mysqli $conn): array
@@ -658,52 +721,353 @@ function dynabaseReportPrequalificationWorkbook(mysqli $conn): array
     return [$dataSheet, $summary];
 }
 
-function dynabaseReportDocumentWorkbook(mysqli $conn): array
+function dynabaseReportSubmissionWorkbook(mysqli $conn, array $authUser): array
+{
+    if (!dynabaseReportTableHasColumns($conn, 'submission_registers', [
+        'id', 'submission_reference', 'project_tender_code', 'project_company_name', 'client_name',
+        'category', 'date_received', 'date_submitted', 'mode_of_submission', 'status',
+        'owner_pms_admin_id', 'record_status', 'created_by', 'created_at', 'updated_by', 'updated_at',
+    ])) return [];
+
+    $scopeSql = '';
+    $types = '';
+    $params = [];
+    if ($authUser !== []) {
+        [$scopeSql, $types, $params] = appendScopedWhere($authUser, 'sr');
+    }
+
+    $hasUpdates = dynabaseReportTableHasColumns($conn, 'submission_register_updates', [
+        'id', 'submission_id', 'message', 'created_by', 'created_by_id', 'created_at', 'updated_at', 'deleted_at',
+    ]);
+    $updateCountSql = $hasUpdates
+        ? "(SELECT COUNT(*) FROM submission_register_updates su WHERE su.submission_id = sr.id AND su.deleted_at IS NULL)"
+        : '0';
+    $latestUpdateSql = $hasUpdates
+        ? "(SELECT su.message FROM submission_register_updates su WHERE su.submission_id = sr.id AND su.deleted_at IS NULL ORDER BY su.created_at DESC, su.id DESC LIMIT 1)"
+        : "''";
+
+    $rows = dbFetchAll(
+        $conn,
+        "SELECT sr.id, sr.submission_reference, sr.project_tender_code, sr.project_company_name,
+                sr.client_name, sr.category, sr.date_received, sr.date_submitted,
+                DATEDIFF(sr.date_submitted, sr.date_received) AS turnaround_days,
+                sr.mode_of_submission, sr.hard_copy_contact_name, sr.hard_copy_contact_email,
+                sr.hard_copy_contact_phone, sr.hard_copy_contact_address, sr.email_recipient,
+                sr.status, sr.owner_pms_admin_id,
+                TRIM(CONCAT(COALESCE(owner.first_name, ''), ' ', COALESCE(owner.last_name, ''))) AS owner_name,
+                {$updateCountSql} AS progress_update_count,
+                {$latestUpdateSql} AS latest_progress_update,
+                sr.created_by, sr.created_at, sr.updated_by, sr.updated_at
+         FROM submission_registers sr
+         LEFT JOIN users owner ON owner.id = sr.owner_pms_admin_id
+         WHERE sr.record_status = 'active'{$scopeSql}
+         ORDER BY sr.date_submitted DESC, sr.updated_at DESC, sr.project_company_name ASC",
+        $types,
+        $params
+    );
+
+    foreach ($rows as $index => $_) {
+        $rows[$index]['serial'] = $index + 1;
+        $rows[$index]['owner_name'] = dynabaseReportCleanLabel($rows[$index]['owner_name'] ?? null, 'Unassigned');
+        $rows[$index]['delivery_contact'] = trim(implode(' | ', array_filter([
+            trim((string) ($rows[$index]['hard_copy_contact_name'] ?? '')),
+            trim((string) ($rows[$index]['hard_copy_contact_email'] ?? '')),
+            trim((string) ($rows[$index]['hard_copy_contact_phone'] ?? '')),
+        ])));
+    }
+
+    $headers = [
+        'S/N', 'Reference', 'Tender Code', 'Project / Company', 'Client', 'Category',
+        'Date Received', 'Date Submitted', 'Turnaround (Days)', 'Submission Mode',
+        'Email Recipient', 'Hard-copy Contact', 'Hard-copy Address', 'Status',
+        'Progress Updates', 'Latest Progress Update', 'PMS Owner', 'Created By',
+        'Created', 'Updated By', 'Last Updated'
+    ];
+    $columns = [
+        ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'],
+        ['key' => 'submission_reference'], ['key' => 'project_tender_code'], ['key' => 'project_company_name'],
+        ['key' => 'client_name'], ['key' => 'category'],
+        ['key' => 'date_received', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+        ['key' => 'date_submitted', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+        ['key' => 'turnaround_days', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+        ['key' => 'mode_of_submission'], ['key' => 'email_recipient'], ['key' => 'delivery_contact'],
+        ['key' => 'hard_copy_contact_address', 'style' => DYNABASE_XLSX_STYLE_WRAP], ['key' => 'status'],
+        ['key' => 'progress_update_count', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+        ['key' => 'latest_progress_update', 'style' => DYNABASE_XLSX_STYLE_WRAP], ['key' => 'owner_name'],
+        ['key' => 'created_by'], ['key' => 'created_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+        ['key' => 'updated_by'], ['key' => 'updated_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+    ];
+    $dataSheet = dynabaseReportDataSheet(
+        'Submission Register Report',
+        'Active prequalification, technical and registration submissions with delivery and progress information',
+        $headers,
+        $rows,
+        [7, 20, 22, 34, 28, 18, 15, 15, 16, 18, 26, 30, 38, 14, 15, 42, 24, 22, 17, 22, 17],
+        $columns
+    );
+    $dataSheet['name'] = 'Submission Register';
+
+    $summary = dynabaseReportSummarySheet(
+        'Submission Register Summary',
+        'Submission distribution by status, category, delivery mode and PMS ownership',
+        [
+            ['title' => 'By Status', 'headers' => ['Status', 'Submissions'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['status'] ?? '')],
+            ['title' => 'By Category', 'headers' => ['Category', 'Submissions'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['category'] ?? '')],
+            ['title' => 'By Submission Mode', 'headers' => ['Mode', 'Submissions'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['mode_of_submission'] ?? '')],
+            ['title' => 'By PMS Owner', 'headers' => ['PMS Owner', 'Submissions'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['owner_name'] ?? '')],
+        ]
+    );
+    $summary['name'] = 'Submission Summary';
+
+    $sheets = [$dataSheet, $summary];
+    if ($hasUpdates) {
+        $updateRows = dbFetchAll(
+            $conn,
+            "SELECT su.id, sr.submission_reference, sr.project_company_name, sr.client_name,
+                    sr.category, sr.status, su.message,
+                    COALESCE(NULLIF(TRIM(CONCAT(COALESCE(author.first_name, ''), ' ', COALESCE(author.last_name, ''))), ''), su.created_by) AS update_author,
+                    su.created_at, su.updated_at
+             FROM submission_register_updates su
+             INNER JOIN submission_registers sr ON sr.id = su.submission_id
+             LEFT JOIN users author ON author.id = su.created_by_id
+             WHERE su.deleted_at IS NULL AND sr.record_status = 'active'{$scopeSql}
+             ORDER BY su.created_at DESC, su.id DESC",
+            $types,
+            $params
+        );
+        foreach ($updateRows as $index => $_) $updateRows[$index]['serial'] = $index + 1;
+        $updateSheet = dynabaseReportDataSheet(
+            'Submission Progress Updates',
+            'Chronological progress and communication history for active submission records',
+            ['S/N', 'Reference', 'Project / Company', 'Client', 'Category', 'Current Status', 'Progress Update', 'Updated By', 'Created', 'Edited'],
+            $updateRows,
+            [7, 20, 34, 27, 18, 15, 55, 24, 18, 18],
+            [
+                ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'],
+                ['key' => 'submission_reference'], ['key' => 'project_company_name'], ['key' => 'client_name'],
+                ['key' => 'category'], ['key' => 'status'], ['key' => 'message', 'style' => DYNABASE_XLSX_STYLE_WRAP],
+                ['key' => 'update_author'], ['key' => 'created_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+                ['key' => 'updated_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+            ]
+        );
+        $updateSheet['name'] = 'Progress Updates';
+        $sheets[] = $updateSheet;
+    }
+
+    return $sheets;
+}
+
+function dynabaseReportDocumentWorkbook(mysqli $conn, array $authUser): array
 {
     if (!dynabaseReportTableExists($conn, 'document_table')) return [];
+
+    $effectivePermissions = userEffectivePermissions($conn, $authUser);
+    $canViewShareAnalytics = in_array('documents.share', $effectivePermissions, true);
+    $hasRevisions = dynabaseReportTableHasColumns($conn, 'document_revisions', [
+        'document_id', 'revision_code', 'revision_no', 'revision_notes', 'original_name',
+        'file_extension', 'file_size', 'is_current', 'record_status', 'uploaded_by', 'uploaded_at',
+    ]);
+    $hasShares = $canViewShareAnalytics && dynabaseReportTableHasColumns($conn, 'document_share_links', [
+        'document_id', 'revision_id', 'link_name', 'access_mode', 'allow_download', 'expires_at',
+        'status', 'access_count', 'download_count', 'created_by', 'created_at', 'last_accessed_at', 'revoked_at',
+    ]);
     $statusWhere = dynabaseReportColumnExists($conn, 'document_table', 'status') ? " WHERE d.status = 'active'" : '';
     $relationship = dynabaseReportColumnExists($conn, 'document_table', 'relationship_type') ? 'd.relationship_type' : "'general' AS relationship_type";
     $fileSize = dynabaseReportColumnExists($conn, 'document_table', 'file_size') ? 'd.file_size' : '0 AS file_size';
-    $version = dynabaseReportColumnExists($conn, 'document_table', 'version_no') ? 'd.version_no' : '1 AS version_no';
     $extension = dynabaseReportColumnExists($conn, 'document_table', 'file_extension') ? 'd.file_extension' : "LOWER(SUBSTRING_INDEX(d.document, '.', -1)) AS file_extension";
+    $revisionSelect = $hasRevisions
+        ? "(SELECT COUNT(*) FROM document_revisions r WHERE r.document_id = d.id AND r.record_status <> 'deleted') AS revision_count,
+           (SELECT r.revision_code FROM document_revisions r WHERE r.document_id = d.id AND r.record_status = 'active' AND r.is_current = 1 ORDER BY r.id DESC LIMIT 1) AS current_revision_code"
+        : "1 AS revision_count, CONCAT('Rev', LPAD(GREATEST(COALESCE(d.version_no, 1), 1), 3, '0')) AS current_revision_code";
+    $shareSelect = $hasShares
+        ? "(SELECT COUNT(*) FROM document_share_links sl WHERE sl.document_id = d.id) AS share_link_count,
+           (SELECT COUNT(*) FROM document_share_links sl WHERE sl.document_id = d.id AND sl.status = 'active' AND sl.expires_at > NOW()) AS active_share_link_count,
+           (SELECT COUNT(*) FROM document_share_links sl WHERE sl.document_id = d.id AND sl.status = 'active' AND sl.expires_at <= NOW()) AS expired_share_link_count,
+           (SELECT COALESCE(SUM(sl.access_count), 0) FROM document_share_links sl WHERE sl.document_id = d.id) AS share_access_count,
+           (SELECT COALESCE(SUM(sl.download_count), 0) FROM document_share_links sl WHERE sl.document_id = d.id) AS share_download_count"
+        : '0 AS share_link_count, 0 AS active_share_link_count, 0 AS expired_share_link_count, 0 AS share_access_count, 0 AS share_download_count';
+
     $rows = dbFetchAll(
         $conn,
         "SELECT d.id, d.document_title, d.document_type, d.document_category, d.presentation_code, d.updated_content,
-                {$relationship}, {$fileSize}, {$version}, {$extension}, d.created_by, d.updated_by, d.created_at, d.updated_at
+                {$relationship}, {$fileSize}, {$extension}, {$revisionSelect}, {$shareSelect},
+                d.created_by, d.updated_by, d.created_at, d.updated_at
          FROM document_table d {$statusWhere}
          ORDER BY d.updated_at DESC, d.document_title ASC"
     );
     foreach ($rows as $index => $_) {
         $rows[$index]['serial'] = $index + 1;
         $rows[$index]['file_size_label'] = (int) $rows[$index]['file_size'] > 0 ? round(((int) $rows[$index]['file_size']) / 1048576, 2) : 0;
+        $revisionCount = (int) ($rows[$index]['revision_count'] ?? 0);
+        $rows[$index]['revision_coverage'] = $revisionCount <= 1 ? 'Single revision' : 'Multiple revisions';
+        $rows[$index]['sharing_state'] = (int) ($rows[$index]['active_share_link_count'] ?? 0) > 0 ? 'Actively shared' : 'Not actively shared';
     }
-    $headers = ['S/N', 'Document', 'Type', 'Category', 'Reference Code', 'Relationship', 'Format', 'Size (MB)', 'Version', 'Update Summary', 'Created By', 'Updated By', 'Created', 'Last Updated'];
+
+    $headers = ['S/N', 'Document', 'Type', 'Category', 'Reference Code', 'Relationship', 'Format', 'Size (MB)', 'Current Revision', 'Revision Count'];
     $columns = [
-        ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'], ['key' => 'document_title'], ['key' => 'document_type'], ['key' => 'document_category'], ['key' => 'presentation_code'], ['key' => 'relationship_type'], ['key' => 'file_extension'],
-        ['key' => 'file_size_label', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'], ['key' => 'version_no', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'], ['key' => 'updated_content', 'style' => DYNABASE_XLSX_STYLE_WRAP], ['key' => 'created_by'], ['key' => 'updated_by'], ['key' => 'created_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'], ['key' => 'updated_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+        ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'], ['key' => 'document_title'],
+        ['key' => 'document_type'], ['key' => 'document_category'], ['key' => 'presentation_code'], ['key' => 'relationship_type'],
+        ['key' => 'file_extension'], ['key' => 'file_size_label', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+        ['key' => 'current_revision_code'], ['key' => 'revision_count', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
     ];
-    $dataSheet = dynabaseReportDataSheet('Document Library Report', 'Document register with category, relationship, format and version metadata', $headers, $rows, [7, 34, 18, 24, 22, 18, 12, 13, 10, 34, 20, 20, 16, 16], $columns);
+    $widths = [7, 34, 18, 24, 22, 18, 11, 13, 16, 14];
+
+    if ($hasShares) {
+        array_push($headers, 'Active Share Links', 'Expired Links', 'Total Link Accesses', 'Shared Downloads');
+        array_push(
+            $columns,
+            ['key' => 'active_share_link_count', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+            ['key' => 'expired_share_link_count', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+            ['key' => 'share_access_count', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+            ['key' => 'share_download_count', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number']
+        );
+        array_push($widths, 16, 14, 16, 16);
+    }
+
+    array_push($headers, 'Update Summary', 'Created By', 'Updated By', 'Created', 'Last Updated');
+    array_push(
+        $columns,
+        ['key' => 'updated_content', 'style' => DYNABASE_XLSX_STYLE_WRAP], ['key' => 'created_by'], ['key' => 'updated_by'],
+        ['key' => 'created_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+        ['key' => 'updated_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date']
+    );
+    array_push($widths, 34, 20, 20, 16, 16);
+
+    $dataSheet = dynabaseReportDataSheet(
+        'Document Library Report',
+        $hasShares
+            ? 'Active document register with revision coverage, secure-sharing activity and file metadata'
+            : 'Active document register with revision coverage and file metadata',
+        $headers,
+        $rows,
+        $widths,
+        $columns
+    );
     $dataSheet['name'] = 'Document Register';
-    $summary = dynabaseReportSummarySheet('Document Library Summary', 'Library distribution by document type, category, relationship and format', [
+
+    $summaryTables = [
         ['title' => 'By Document Type', 'headers' => ['Type', 'Documents'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['document_type'] ?? '')],
         ['title' => 'By Category', 'headers' => ['Category', 'Documents'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['document_category'] ?? '')],
-        ['title' => 'By Relationship', 'headers' => ['Relationship', 'Documents'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['relationship_type'] ?? '')],
         ['title' => 'By Format', 'headers' => ['Format', 'Documents'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['file_extension'] ?? '')],
-    ]);
+        ['title' => 'Revision Coverage', 'headers' => ['Revision State', 'Documents'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['revision_coverage'] ?? '')],
+    ];
+    if ($hasShares) {
+        $summaryTables[] = ['title' => 'Sharing State', 'headers' => ['Sharing State', 'Documents'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['sharing_state'] ?? '')];
+    }
+    $summary = dynabaseReportSummarySheet('Document Library Summary', 'Library distribution, revision coverage and permitted sharing intelligence', $summaryTables);
     $summary['name'] = 'Document Summary';
-    return [$dataSheet, $summary];
+    $sheets = [$dataSheet, $summary];
+
+    if ($hasRevisions) {
+        $revisionRows = dbFetchAll(
+            $conn,
+            "SELECT r.id, d.document_title, d.presentation_code, r.revision_code, r.revision_no,
+                    r.revision_notes, r.original_name, r.file_extension, r.file_size,
+                    r.is_current, r.record_status, r.replaces_revision_id, r.uploaded_by, r.uploaded_at, r.replaced_at
+             FROM document_revisions r
+             INNER JOIN document_table d ON d.id = r.document_id
+             WHERE d.status = 'active' AND r.record_status <> 'deleted'
+             ORDER BY d.document_title ASC, r.revision_no DESC, r.id DESC"
+        );
+        foreach ($revisionRows as $index => $_) {
+            $revisionRows[$index]['serial'] = $index + 1;
+            $revisionRows[$index]['file_size_label'] = (int) $revisionRows[$index]['file_size'] > 0 ? round(((int) $revisionRows[$index]['file_size']) / 1048576, 2) : 0;
+            $revisionRows[$index]['current_label'] = (int) ($revisionRows[$index]['is_current'] ?? 0) === 1 ? 'Yes' : 'No';
+            $revisionRows[$index]['status_label'] = ucwords(str_replace('_', ' ', (string) ($revisionRows[$index]['record_status'] ?? 'active')));
+        }
+        $revisionSheet = dynabaseReportDataSheet(
+            'Document Revision History',
+            'Current and replaced revision uploads retained for document traceability',
+            ['S/N', 'Document', 'Reference Code', 'Revision', 'Sequence', 'Current', 'Revision Status', 'Filename', 'Format', 'Size (MB)', 'Revision Notes', 'Uploaded By', 'Uploaded', 'Replaced'],
+            $revisionRows,
+            [7, 34, 22, 14, 10, 10, 16, 38, 11, 13, 40, 22, 18, 18],
+            [
+                ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'], ['key' => 'document_title'],
+                ['key' => 'presentation_code'], ['key' => 'revision_code'], ['key' => 'revision_no', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+                ['key' => 'current_label', 'style' => DYNABASE_XLSX_STYLE_CENTER], ['key' => 'status_label'], ['key' => 'original_name'],
+                ['key' => 'file_extension'], ['key' => 'file_size_label', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+                ['key' => 'revision_notes', 'style' => DYNABASE_XLSX_STYLE_WRAP], ['key' => 'uploaded_by'],
+                ['key' => 'uploaded_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+                ['key' => 'replaced_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+            ]
+        );
+        $revisionSheet['name'] = 'Revision History';
+        $sheets[] = $revisionSheet;
+    }
+
+    if ($hasShares) {
+        $shareRows = dbFetchAll(
+            $conn,
+            "SELECT sl.id, d.document_title, d.presentation_code,
+                    COALESCE(r.revision_code, 'Current revision') AS shared_revision,
+                    sl.link_name, sl.access_mode, sl.allow_download,
+                    CASE
+                        WHEN sl.status = 'revoked' THEN 'Revoked'
+                        WHEN sl.expires_at <= NOW() THEN 'Expired'
+                        ELSE 'Active'
+                    END AS link_status,
+                    sl.expires_at, sl.access_count, sl.download_count,
+                    sl.created_by, sl.created_at, sl.last_accessed_at, sl.revoked_at
+             FROM document_share_links sl
+             INNER JOIN document_table d ON d.id = sl.document_id
+             LEFT JOIN document_revisions r ON r.id = sl.revision_id
+             WHERE d.status = 'active'
+             ORDER BY sl.created_at DESC, sl.id DESC"
+        );
+        foreach ($shareRows as $index => $_) {
+            $shareRows[$index]['serial'] = $index + 1;
+            $shareRows[$index]['access_mode_label'] = ucfirst((string) ($shareRows[$index]['access_mode'] ?? 'open'));
+            $shareRows[$index]['download_label'] = (int) ($shareRows[$index]['allow_download'] ?? 0) === 1 ? 'Allowed' : 'Disabled';
+        }
+        $shareSheet = dynabaseReportDataSheet(
+            'Secure Document Sharing Report',
+            'Link controls and usage metrics without exposing passwords or secure tokens',
+            ['S/N', 'Document', 'Reference Code', 'Shared Revision', 'Link Name', 'Access Type', 'Downloads', 'Link Status', 'Expires', 'Accesses', 'Downloads Made', 'Created By', 'Created', 'Last Accessed', 'Revoked'],
+            $shareRows,
+            [7, 34, 22, 16, 28, 14, 13, 13, 18, 12, 16, 22, 18, 18, 18],
+            [
+                ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'], ['key' => 'document_title'],
+                ['key' => 'presentation_code'], ['key' => 'shared_revision'], ['key' => 'link_name'], ['key' => 'access_mode_label'],
+                ['key' => 'download_label'], ['key' => 'link_status'], ['key' => 'expires_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+                ['key' => 'access_count', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+                ['key' => 'download_count', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'], ['key' => 'created_by'],
+                ['key' => 'created_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+                ['key' => 'last_accessed_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+                ['key' => 'revoked_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+            ]
+        );
+        $shareSheet['name'] = 'Secure Sharing';
+        $sheets[] = $shareSheet;
+    }
+
+    return $sheets;
 }
 
-function dynabaseReportCatalog(mysqli $conn): array
+function dynabaseReportCatalog(mysqli $conn, array $authUser): array
 {
-    $count = static function (string $sql) use ($conn): int {
-        try { return dbScalarInt($conn, $sql); } catch (Throwable) { return 0; }
+    $count = static function (string $sql, string $types = '', array $params = []) use ($conn): int {
+        try { return dbScalarInt($conn, $sql, $types, $params); } catch (Throwable) { return 0; }
     };
     $surveyWhere = dynabaseReportColumnExists($conn, 'clients_survey_form', 'deleted_at') ? ' WHERE deleted_at IS NULL' : '';
     $documentWhere = dynabaseReportColumnExists($conn, 'document_table', 'status') ? " WHERE status = 'active'" : '';
     $prequalWhere = dynabaseReportColumnExists($conn, 'prequalification_table', 'record_status') ? " WHERE record_status = 'active'" : '';
+    $effectivePermissions = userEffectivePermissions($conn, $authUser);
+    $documentSheets = 2
+        + (dynabaseReportTableHasColumns($conn, 'document_revisions', ['document_id', 'revision_code', 'record_status']) ? 1 : 0)
+        + (in_array('documents.share', $effectivePermissions, true)
+            && dynabaseReportTableHasColumns($conn, 'document_share_links', ['document_id', 'status', 'expires_at']) ? 1 : 0);
 
-    return [
+    $submissionCount = 0;
+    if (dynabaseReportTableExists($conn, 'submission_registers')) {
+        [$submissionScope, $submissionTypes, $submissionParams] = appendScopedWhere($authUser, 'sr');
+        $submissionCount = $count(
+            "SELECT COUNT(*) AS total FROM submission_registers sr WHERE sr.record_status = 'active'{$submissionScope}",
+            $submissionTypes,
+            $submissionParams
+        );
+    }
+
+    $definitions = [
         [
             'key' => 'gift-lists', 'title' => 'Annual Gift List',
             'description' => 'Multi-sheet workbook with recipient data, consolidated A–D counts and location analysis.',
@@ -747,27 +1111,53 @@ function dynabaseReportCatalog(mysqli $conn): array
             'year_filter' => false, 'sheets' => 2,
         ],
         [
+            'key' => 'submission-register', 'title' => 'Submission Register',
+            'description' => 'Submission status, category, delivery mode, ownership and progress-update reporting.',
+            'record_count' => $submissionCount,
+            'year_filter' => false,
+            'sheets' => dynabaseReportTableHasColumns($conn, 'submission_register_updates', ['submission_id', 'message', 'deleted_at']) ? 3 : 2,
+        ],
+        [
             'key' => 'documents', 'title' => 'Document Library',
-            'description' => 'Document type, category, relationship, file format and version reporting.',
+            'description' => in_array('documents.share', $effectivePermissions, true)
+                ? 'Document metadata, revision history and secure-sharing activity reporting.'
+                : 'Document metadata, formats and revision-history reporting.',
             'record_count' => dynabaseReportTableExists($conn, 'document_table') ? $count('SELECT COUNT(*) AS total FROM document_table' . $documentWhere) : 0,
-            'year_filter' => false, 'sheets' => 2,
+            'year_filter' => false, 'sheets' => $documentSheets,
         ],
     ];
+
+    $catalog = [];
+    foreach ($definitions as $definition) {
+        $access = dynabaseReportAccessForUser($conn, $authUser, $definition['key'], $effectivePermissions);
+        if (!$access['can_view']) continue;
+        $definition['can_export'] = $access['can_export'];
+        $definition['required_view_permission'] = $access['view_permission'];
+        $definition['required_export_permission'] = $access['export_permission'];
+        $catalog[] = $definition;
+    }
+
+    return $catalog;
 }
 
-function dynabaseReportOverview(mysqli $conn, int $giftYear = 0): array
+function dynabaseReportOverview(mysqli $conn, array $authUser, int $giftYear = 0): array
 {
-    $giftRows = dynabaseReportGiftRows($conn, $giftYear);
+    $giftAccess = dynabaseReportAccessForUser($conn, $authUser, 'gift-lists');
+    $giftRows = $giftAccess['can_view'] ? dynabaseReportGiftRows($conn, $giftYear) : [];
+    $giftAnalytics = dynabaseReportGiftAnalytics($giftRows);
+    $giftAnalytics['can_view'] = $giftAccess['can_view'];
+    $giftAnalytics['can_export'] = $giftAccess['can_export'];
+
     return [
-        'available_years' => dynabaseReportAvailableGiftYears($conn),
+        'available_years' => $giftAccess['can_view'] ? dynabaseReportAvailableGiftYears($conn) : [],
         'selected_year' => $giftYear > 0 ? $giftYear : 'all',
-        'catalog' => dynabaseReportCatalog($conn),
-        'gift_list' => dynabaseReportGiftAnalytics($giftRows),
+        'catalog' => dynabaseReportCatalog($conn, $authUser),
+        'gift_list' => $giftAnalytics,
         'generated_at' => date(DATE_ATOM),
     ];
 }
 
-function dynabaseReportWorkbook(mysqli $conn, string $type, int $giftYear = 0): array
+function dynabaseReportWorkbook(mysqli $conn, string $type, int $giftYear = 0, array $authUser = []): array
 {
     return match ($type) {
         'gift-lists' => dynabaseReportGiftWorkbook(dynabaseReportGiftRows($conn, $giftYear), $giftYear),
@@ -777,7 +1167,8 @@ function dynabaseReportWorkbook(mysqli $conn, string $type, int $giftYear = 0): 
         'pms-ownership' => dynabaseReportOwnershipWorkbook($conn),
         'client-surveys' => dynabaseReportSurveyWorkbook($conn),
         'prequalifications' => dynabaseReportPrequalificationWorkbook($conn),
-        'documents' => dynabaseReportDocumentWorkbook($conn),
+        'submission-register' => dynabaseReportSubmissionWorkbook($conn, $authUser),
+        'documents' => dynabaseReportDocumentWorkbook($conn, $authUser),
         default => throw new RuntimeException('Unknown report type.', 404),
     };
 }
@@ -793,7 +1184,9 @@ function dynabaseReportFilename(string $type, int $giftYear = 0): string
         'pms-ownership' => 'dynabase-pms-ownership-' . $date . '.xlsx',
         'client-surveys' => 'dynabase-client-survey-performance-' . $date . '.xlsx',
         'prequalifications' => 'dynabase-prequalification-readiness-' . $date . '.xlsx',
+        'submission-register' => 'dynabase-submission-register-' . $date . '.xlsx',
         'documents' => 'dynabase-document-library-' . $date . '.xlsx',
         default => 'dynabase-report-' . $date . '.xlsx',
     };
 }
+

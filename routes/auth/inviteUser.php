@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/security.php';
 require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/mailer.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 use Respect\Validation\Validator as v;
 
@@ -23,6 +24,8 @@ if ($role === DYNABASE_ROLE_PMS_ADMIN) {
 } elseif ($role !== DYNABASE_ROLE_ADMIN) {
     $isPmsAdmin = false;
 }
+
+$submittedPermissionKeys = $data['permission_keys'] ?? null;
 
 $parentPmsAdminId = isset($data['parent_pms_admin_id']) && $data['parent_pms_admin_id'] !== ''
     ? (int) $data['parent_pms_admin_id']
@@ -41,6 +44,7 @@ if (!canInviteRole($actor, $role)) {
 }
 
 $resolvedParentPmsAdminId = resolveParentPmsAdminIdForInvite($conn, $actor, $role, $parentPmsAdminId);
+$resolvedPermissionKeys = resolveSubmittedPermissions($conn, $actor, $role, $submittedPermissionKeys);
 
 $existingStmt = $conn->prepare('SELECT id, status, role, is_pms_admin FROM users WHERE email = ? LIMIT 1');
 $existingStmt->bind_param('s', $email);
@@ -81,6 +85,8 @@ try {
         $stmt->close();
     }
 
+    replaceUserPermissions($conn, (int) $userId, $resolvedPermissionKeys, (int) $actor['id']);
+
     $cancelStmt = $conn->prepare('UPDATE user_invitations SET status = "cancelled" WHERE email = ? AND status = "pending"');
     $cancelStmt->bind_param('s', $email);
     $cancelStmt->execute();
@@ -116,6 +122,7 @@ writeAuditLog($conn, $actor, 'users.invite', 'user_invitation', $invitationId, [
     'parent_pms_admin_id' => $resolvedParentPmsAdminId,
     'is_pms_admin' => $isPmsAdmin,
     'mail_result' => $mailResult === true ? 'sent' : 'not_sent',
+    'permissions' => $resolvedPermissionKeys,
 ]);
 
 jsonResponse([
@@ -129,6 +136,7 @@ jsonResponse([
         'role' => $role,
         'parent_pms_admin_id' => $resolvedParentPmsAdminId,
         'is_pms_admin' => $isPmsAdmin,
+        'permission_keys' => $resolvedPermissionKeys,
         'mail_note' => $mailResult === true ? null : $mailResult,
     ]
 ], 201);

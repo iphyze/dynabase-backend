@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../includes/connection.php';
 require_once __DIR__ . '/../../includes/security.php';
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/authorization.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 require_once __DIR__ . '/../../includes/audit.php';
 
 use Firebase\JWT\JWT;
@@ -107,5 +108,5 @@ jsonResponse([
     'message' => $user['must_change_password'] ? 'Login successful. Please create a new password to continue.' : 'Login successful.',
     'requiresPasswordChange' => (bool) $user['must_change_password'],
     'csrfToken' => $csrfToken,
-    'data' => userPublicPayload($user)
+    'data' => userPublicPayload($user) + ['permissions' => userEffectivePermissions($conn, $user)]
 ]);

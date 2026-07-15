@@ -27,8 +27,8 @@ if ($firstName === '' || $lastName === '') {
     throw new RuntimeException('Please provide your first name and last name.', 422);
 }
 
-if (strlen($password) < 12) {
-    throw new RuntimeException('Password must be at least 12 characters.', 422);
+if (strlen($password) < 10) {
+    throw new RuntimeException('Password must be at least 10 characters.', 422);
 }
 
 if ($password !== $confirmPassword) {

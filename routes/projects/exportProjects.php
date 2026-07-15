@@ -35,10 +35,28 @@ $types = '';
 $params = [];
 
 if ($q !== '') {
-    $where .= ' AND (p.`project_title` LIKE ? OR p.`tender_code` LIKE ? OR p.`project_country` LIKE ? OR p.`project_city` LIKE ? OR p.`division` LIKE ? OR p.`project_status` LIKE ? OR p.`progress` LIKE ? OR pc.`project_code` LIKE ?)';
+    $where .= ' AND (
+        p.`project_title` LIKE ?
+        OR p.`tender_code` LIKE ?
+        OR p.`project_country` LIKE ?
+        OR p.`project_city` LIKE ?
+        OR p.`division` LIKE ?
+        OR p.`project_status` LIKE ?
+        OR p.`progress` LIKE ?
+        OR pc.`project_code` LIKE ?
+        OR p.`project_client` LIKE ?
+        OR p.`keyperson` LIKE ?
+        OR EXISTS (
+            SELECT 1
+            FROM `clients_keypersons_table` search_ck
+            WHERE search_ck.`project_id` = p.`code`
+              AND search_ck.`record_status` = \'active\'
+              AND (search_ck.`clients_name` LIKE ? OR search_ck.`keyperson` LIKE ?)
+        )
+    )';
     $like = '%' . $q . '%';
-    $types .= 'ssssssss';
-    array_push($params, $like, $like, $like, $like, $like, $like, $like, $like);
+    $types .= 'ssssssssssss';
+    array_push($params, $like, $like, $like, $like, $like, $like, $like, $like, $like, $like, $like, $like);
 }
 
 if ($country !== '' && $country !== 'all') {

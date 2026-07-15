@@ -10,8 +10,8 @@ requireMethod('GET');
 $actor = authenticateUser();
 requireRole(
     $actor,
-    [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN],
-    'Only Super Admin and Admin can download users.'
+    [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN],
+    'Only permitted users can download users.'
 );
 
 $search = trim((string) ($_GET['search'] ?? ''));
@@ -33,7 +33,13 @@ $params = [];
 $types = '';
 
 if (userRole($actor) === DYNABASE_ROLE_ADMIN) {
-    $where .= ' AND u.role IN ("admin", "pms_admin", "user")';
+    $where .= ' AND u.role IN ("admin", "pms_admin", "pms_user", "user")';
+}
+
+if (userRole($actor) === DYNABASE_ROLE_PMS_ADMIN) {
+    $where .= ' AND u.parent_pms_admin_id = ? AND u.role = "pms_user"';
+    $params[] = (int) $actor['id'];
+    $types .= 'i';
 }
 
 if ($search !== '') {

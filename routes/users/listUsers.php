@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../includes/connection.php';
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/authorization.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 requireMethod('GET');
 
@@ -35,13 +36,13 @@ $params = [];
 $types = '';
 
 if (userRole($actor) === DYNABASE_ROLE_PMS_ADMIN) {
-    $where .= ' AND u.parent_pms_admin_id = ? AND u.role = "user"';
+    $where .= ' AND u.parent_pms_admin_id = ? AND u.role = "pms_user"';
     $params[] = (int) $actor['id'];
     $types .= 'i';
 }
 
 if (userRole($actor) === DYNABASE_ROLE_ADMIN) {
-    $where .= ' AND u.role IN ("admin", "pms_admin", "user")';
+    $where .= ' AND u.role IN ("admin", "pms_admin", "pms_user", "user")';
 }
 
 if ($search !== '') {
@@ -89,11 +90,12 @@ while ($row = $result->fetch_assoc()) {
         'last_login_at' => $row['last_login_at'],
         'parent_pms_admin_name' => $parentName !== '' ? $parentName : ($row['parent_email'] ?? null),
         'parent_pms_admin_email' => $row['parent_email'] ?? null,
-        'can_activate' => canActivateUser($actor, $row),
-        'can_deactivate' => canDeactivateUser($actor, $row),
-        'can_update' => canUpdateUserProfile($actor, $row),
-        'can_reset_password' => canResetUserPassword($actor, $row),
-        'allowed_roles' => allowedManagedRoles($actor),
+        'can_activate' => userHasPermission($conn, $actor, 'users.status') && canActivateUser($actor, $row),
+        'can_deactivate' => userHasPermission($conn, $actor, 'users.status') && canDeactivateUser($actor, $row),
+        'can_update' => userHasPermission($conn, $actor, 'users.edit') && canUpdateUserProfile($actor, $row),
+        'can_reset_password' => userHasPermission($conn, $actor, 'users.reset') && canResetUserPassword($actor, $row),
+        'allowed_roles' => userHasPermission($conn, $actor, 'users.edit') ? allowedManagedRoles($actor) : [],
+        'permissions' => userEffectivePermissions($conn, $row),
     ];
 }
 $stmt->close();

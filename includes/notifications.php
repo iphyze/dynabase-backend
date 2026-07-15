@@ -185,6 +185,7 @@ function notificationEntityContext(mysqli $conn, ?string $entityType, mixed $ent
         'gift_list' => ['table' => 'gift_lists', 'name' => 'gift_year', 'owner' => 'owner_pms_admin_id', 'path' => '/gift-lists/'],
         'document' => ['table' => 'document_table', 'name' => 'document_title', 'owner' => null, 'path' => '/documents/'],
         'prequalification' => ['table' => 'prequalification_table', 'name' => 'prospective_project', 'owner' => 'owner_pms_admin_id', 'path' => '/prequalifications/'],
+        'submission_register' => ['table' => 'submission_registers', 'name' => 'project_company_name', 'owner' => 'owner_pms_admin_id', 'path' => '/submission-register/'],
         'influence_log' => ['table' => 'log_table', 'name' => 'key_person', 'owner' => 'owner_pms_admin_id', 'path' => '/influence-logs'],
         'web_of_influence' => ['table' => 'web_of_influence_table', 'name' => 'stakeholder_name', 'owner' => 'owner_pms_admin_id', 'path' => '/web-of-influence/'],
         'client_survey' => ['table' => 'clients_survey_form', 'name' => 'company', 'owner' => 'owner_pms_admin_id', 'path' => '/client-surveys/'],
@@ -246,10 +247,24 @@ function notificationActionDefinition(string $action): ?array
         'document.created' => ['category' => 'document', 'severity' => 'success', 'title' => 'Document uploaded', 'verb' => 'uploaded'],
         'document.updated' => ['category' => 'document', 'severity' => 'info', 'title' => 'Document updated', 'verb' => 'updated'],
         'document.replaced' => ['category' => 'document', 'severity' => 'info', 'title' => 'Document replaced', 'verb' => 'replaced'],
+        'document.revision_added' => ['category' => 'document', 'severity' => 'success', 'title' => 'Document revision added', 'verb' => 'added a revision to'],
+        'document.revision_replaced' => ['category' => 'document', 'severity' => 'info', 'title' => 'Document revision replaced', 'verb' => 'replaced a revision on'],
+        'document.revision_current' => ['category' => 'document', 'severity' => 'info', 'title' => 'Current revision changed', 'verb' => 'changed the current revision of'],
+        'document.share_created' => ['category' => 'document', 'severity' => 'info', 'title' => 'Document link created', 'verb' => 'created a share link for'],
+        'document.share_updated' => ['category' => 'document', 'severity' => 'info', 'title' => 'Document link updated', 'verb' => 'updated a share link for'],
+        'document.share_revoked' => ['category' => 'document', 'severity' => 'warning', 'title' => 'Document link revoked', 'verb' => 'revoked a share link for'],
         'document.deleted' => ['category' => 'document', 'severity' => 'warning', 'title' => 'Document deleted', 'verb' => 'deleted'],
+        'document.bulk_deleted' => ['category' => 'document', 'severity' => 'warning', 'title' => 'Documents deleted', 'verb' => 'deleted multiple documents from'],
         'prequalifications.created' => ['category' => 'opportunity', 'severity' => 'success', 'title' => 'Prequalification created', 'verb' => 'created'],
         'prequalifications.updated' => ['category' => 'opportunity', 'severity' => 'info', 'title' => 'Prequalification updated', 'verb' => 'updated'],
         'prequalifications.deleted' => ['category' => 'opportunity', 'severity' => 'warning', 'title' => 'Prequalification deleted', 'verb' => 'deleted'],
+        'submission_register.created' => ['category' => 'opportunity', 'severity' => 'success', 'title' => 'Submission record created', 'verb' => 'created'],
+        'submission_register.updated' => ['category' => 'opportunity', 'severity' => 'info', 'title' => 'Submission record updated', 'verb' => 'updated'],
+        'submission_register.completed' => ['category' => 'opportunity', 'severity' => 'success', 'title' => 'Submission completed', 'verb' => 'completed'],
+        'submission_register.deleted' => ['category' => 'opportunity', 'severity' => 'warning', 'title' => 'Submission record deleted', 'verb' => 'deleted'],
+        'submission_register.update_added' => ['category' => 'opportunity', 'severity' => 'info', 'title' => 'Submission progress added', 'verb' => 'added a progress update to'],
+        'submission_register.update_edited' => ['category' => 'opportunity', 'severity' => 'info', 'title' => 'Submission progress edited', 'verb' => 'edited a progress update on'],
+        'submission_register.update_deleted' => ['category' => 'opportunity', 'severity' => 'warning', 'title' => 'Submission progress removed', 'verb' => 'removed a progress update from'],
         'influence_log.created' => ['category' => 'relationship', 'severity' => 'success', 'title' => 'Influence log added', 'verb' => 'added'],
         'influence_log.updated' => ['category' => 'relationship', 'severity' => 'info', 'title' => 'Influence log updated', 'verb' => 'updated'],
         'influence_log.deleted' => ['category' => 'relationship', 'severity' => 'warning', 'title' => 'Influence log deleted', 'verb' => 'deleted'],
@@ -298,11 +313,14 @@ function dispatchNotificationForAudit(
         $message = $recordName . ' submitted new project feedback.';
     } elseif ($action === 'users.accept_invitation') {
         $message = $recordName . ' joined the Dynabase workspace.';
+    } elseif ($action === 'document.bulk_deleted') {
+        $count = max(1, (int) ($metadata['deleted_count'] ?? 0));
+        $message = $actorName . ' deleted ' . $count . ' document' . ($count === 1 ? '' : 's') . '.';
     } else {
         $message = $actorName . ' ' . $definition['verb'] . ' ' . $recordName . '.';
     }
 
-    $isScopedEntity = in_array($entityType, ['client', 'keyperson', 'gift_list', 'influence_log'], true);
+    $isScopedEntity = in_array($entityType, ['client', 'keyperson', 'gift_list', 'influence_log', 'submission_register'], true);
     $recipients = $isScopedEntity
         ? notificationScopedRecipientIds($conn, $context['owner_pms_admin_id'] ?? null)
         : notificationAdminRecipientIds($conn);

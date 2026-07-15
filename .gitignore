@@ -1,5 +1,6 @@
 .qodo
 .env
 .env.example
-/*.sql
+.env.production
 client-surveys.env.example
+/*.sql

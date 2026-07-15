@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/ownership.php';
 require_once __DIR__ . '/../../includes/dbHelpers.php';
 require_once __DIR__ . '/../../includes/request.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 requireMethod('GET');
 
@@ -28,6 +29,7 @@ if (mb_strlen($query) < 2) {
 $like = '%' . $query . '%';
 $groups = [];
 $total = 0;
+$canSearch = static fn (string $permission): bool => userHasPermission($conn, $authUser, $permission);
 
 $pushGroup = static function (string $key, string $label, array $items) use (&$groups, &$total): void {
     if ($items === []) {
@@ -53,6 +55,7 @@ $pushGroup = static function (string $key, string $label, array $items) use (&$g
     $total += count($normalised);
 };
 
+if ($canSearch('clients.view')) {
 [$clientScopeSql, $clientScopeParams] = buildPmsOwnershipWhereClause($authUser, 'c');
 $clientTypes = 'sss';
 $clientParams = [$like, $like, $like];
@@ -78,7 +81,9 @@ $clientRows = dbFetchAll(
     $clientParams
 );
 $pushGroup('clients', 'Clients', array_map(static fn (array $row): array => $row + ['path' => '/clients/' . (int) $row['id']], $clientRows));
+}
 
+if ($canSearch('keypersons.view')) {
 [$keypersonScopeSql, $keypersonScopeParams] = buildPmsOwnershipWhereClause($authUser, 'k');
 $keypersonTypes = 'ssss';
 $keypersonParams = [$like, $like, $like, $like];
@@ -104,7 +109,9 @@ $keypersonRows = dbFetchAll(
     $keypersonParams
 );
 $pushGroup('keypersons', 'Key Persons', array_map(static fn (array $row): array => $row + ['path' => '/keypersons/' . (int) $row['id']], $keypersonRows));
+}
 
+if ($canSearch('gift_lists.view')) {
 $giftOwnerId = resolveOwnerPmsAdminId($authUser);
 $giftWhere = '';
 $giftTypes = 'sssss';
@@ -146,8 +153,9 @@ $giftRows = dbFetchAll(
     array_merge(array_slice($giftParams, 0, 5), [$like], array_slice($giftParams, 5))
 );
 $pushGroup('gift_lists', 'Gift Lists', array_map(static fn (array $row): array => $row + ['path' => '/gift-lists/' . (int) $row['id']], $giftRows));
+}
 
-if (userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
+if ($canSearch('tenders.view')) {
     $projectRows = dbFetchAll(
         $conn,
         "SELECT p.id,
@@ -169,7 +177,9 @@ if (userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
         unset($row['code']);
         return $row;
     }, $projectRows));
+}
 
+if ($canSearch('documents.view')) {
     $documentRows = dbFetchAll(
         $conn,
         "SELECT d.id,
@@ -185,7 +195,9 @@ if (userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
         [$like, $like, $like, $like, $limit]
     );
     $pushGroup('documents', 'Documents', array_map(static fn (array $row): array => $row + ['path' => '/documents/' . (int) $row['id']], $documentRows));
+}
 
+if ($canSearch('prequalifications.view')) {
     $prequalificationRows = dbFetchAll(
         $conn,
         "SELECT p.id,
@@ -201,7 +213,36 @@ if (userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
         [$like, $like, $like, $like, $limit]
     );
     $pushGroup('prequalifications', 'Prequalifications', array_map(static fn (array $row): array => $row + ['path' => '/prequalifications/' . (int) $row['id']], $prequalificationRows));
+}
 
+if ($canSearch('submission_register.view')) {
+[$submissionScopeSql, $submissionScopeParams] = buildPmsOwnershipWhereClause($authUser, 'sr');
+$submissionTypes = 'ssssssi';
+$submissionParams = [$like, $like, $like, $like, $like, $like, $limit];
+foreach ($submissionScopeParams as $scopeParam) {
+    $submissionTypes = substr($submissionTypes, 0, -1) . 'i' . substr($submissionTypes, -1);
+    array_splice($submissionParams, count($submissionParams) - 1, 0, [$scopeParam]);
+}
+$submissionRows = dbFetchAll(
+    $conn,
+    "SELECT sr.id,
+            COALESCE(NULLIF(sr.project_company_name, ''), sr.submission_reference) AS title,
+            CONCAT_WS(' • ', NULLIF(sr.client_name, ''), NULLIF(sr.category, '')) AS subtitle,
+            CONCAT_WS(' • ', NULLIF(sr.status, ''), NULLIF(sr.mode_of_submission, ''), NULLIF(sr.submission_reference, '')) AS meta
+     FROM submission_registers sr
+     WHERE sr.record_status = 'active'
+       AND (sr.submission_reference LIKE ? OR sr.project_company_name LIKE ? OR sr.client_name LIKE ?
+            OR sr.category LIKE ? OR sr.mode_of_submission LIKE ? OR sr.status LIKE ?)
+       {$submissionScopeSql}
+     ORDER BY sr.updated_at DESC, sr.id DESC
+     LIMIT ?",
+    $submissionTypes,
+    $submissionParams
+);
+$pushGroup('submission_register', 'Submission Register', array_map(static fn (array $row): array => $row + ['path' => '/submission-register/' . (int) $row['id']], $submissionRows));
+}
+
+if ($canSearch('web_of_influence.view')) {
     $influenceRows = dbFetchAll(
         $conn,
         "SELECT w.id,
@@ -219,7 +260,9 @@ if (userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
         [$like, $like, $like, $like, $limit]
     );
     $pushGroup('web_of_influence', 'Web of Influence', array_map(static fn (array $row): array => $row + ['path' => '/web-of-influence/' . (int) $row['id']], $influenceRows));
+}
 
+if ($canSearch('client_surveys.view')) {
     $surveyRows = dbFetchAll(
         $conn,
         "SELECT s.id,
@@ -235,7 +278,9 @@ if (userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
         [$like, $like, $like, $like, $limit]
     );
     $pushGroup('client_surveys', 'Client Surveys', array_map(static fn (array $row): array => $row + ['path' => '/client-surveys/' . (int) $row['id']], $surveyRows));
+}
 
+if ($canSearch('users.view')) {
     $userRows = dbFetchAll(
         $conn,
         "SELECT u.id,

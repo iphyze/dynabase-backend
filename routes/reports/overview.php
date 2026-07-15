@@ -18,5 +18,5 @@ $giftYear = dynabaseReportYearFilter($_GET['year'] ?? 'all');
 jsonResponse([
     'status' => 'Success',
     'message' => 'Report overview retrieved successfully.',
-    'data' => dynabaseReportOverview($conn, $giftYear),
+    'data' => dynabaseReportOverview($conn, $authUser, $giftYear),
 ]);

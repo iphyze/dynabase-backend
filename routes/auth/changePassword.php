@@ -25,8 +25,8 @@ if ($newPassword !== $confirmPassword) {
     throw new RuntimeException('New password and confirmation password do not match.', 422);
 }
 
-if (strlen($newPassword) < 12) {
-    throw new RuntimeException('New password must be at least 12 characters long.', 422);
+if (strlen($newPassword) < 10) {
+    throw new RuntimeException('New password must be at least 10 characters long.', 422);
 }
 
 if (hash_equals($currentPassword, $newPassword)) {

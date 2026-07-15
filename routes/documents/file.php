@@ -7,7 +7,10 @@ require_once __DIR__ . '/../../includes/audit.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-$id = (int) ($_GET['id'] ?? 0);
+assertDocumentRevisionSchema($conn);
+
+$id = (int) ($_GET['id'] ?? $_GET['document_id'] ?? 0);
+$revisionId = (int) ($_GET['revision_id'] ?? 0);
 $mode = strtolower(cleanString($_GET['mode'] ?? 'download'));
 if ($id <= 0) {
     throw new RuntimeException('Document ID is required.', 422);
@@ -17,24 +20,35 @@ if (!in_array($mode, ['preview', 'download'], true)) {
 }
 
 $document = assertDocumentAccessible($conn, $authUser, $id);
-$absolutePath = resolveDocumentAbsolutePath($document);
+$revision = null;
+if ($revisionId > 0) {
+    $revision = assertDocumentRevisionAccessible($conn, $authUser, $id, $revisionId, true);
+    $filePayload = documentRevisionResponsePayload($revision);
+    $absolutePath = resolveDocumentAbsolutePath($revision);
+} else {
+    $filePayload = documentResponsePayload($document);
+    $absolutePath = resolveDocumentAbsolutePath($document);
+}
+
 if ($absolutePath === null) {
+    $legacy = str_starts_with((string) (($revision ?? $document)['storage_path'] ?? ''), 'legacy/');
     throw new RuntimeException(
-        str_starts_with((string) ($document['storage_path'] ?? ''), 'legacy/')
+        $legacy
             ? 'The legacy document file has not yet been copied into secure storage.'
             : 'The document file is unavailable.',
         404
     );
 }
 
-$payload = documentResponsePayload($document);
-$previewable = (bool) $payload['previewable'];
+$previewable = (bool) $filePayload['previewable'];
 $disposition = $mode === 'preview' && $previewable ? 'inline' : 'attachment';
-$filename = cleanDocumentOriginalName((string) $payload['original_name']);
-$mimeType = $disposition === 'inline' ? (string) $payload['mime_type'] : 'application/octet-stream';
+$filename = cleanDocumentOriginalName((string) $filePayload['original_name']);
+$mimeType = $disposition === 'inline' ? (string) $filePayload['mime_type'] : 'application/octet-stream';
 
 writeAuditLog($conn, $authUser, $disposition === 'inline' ? 'document.previewed' : 'document.downloaded', 'document', $id, [
     'title' => $document['document_title'],
+    'revision_id' => $revisionId > 0 ? $revisionId : ($document['current_revision_id'] ?? null),
+    'revision_code' => $revision['revision_code'] ?? ($document['current_revision_code'] ?? null),
     'original_name' => $filename,
 ]);
 

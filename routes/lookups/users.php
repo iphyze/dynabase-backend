@@ -8,7 +8,7 @@ require_once __DIR__ . '/../../includes/lookup.php';
 requireMethod('GET');
 $authUser = authenticateUser();
 
-if (!userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_PMS_ADMIN])) {
+if (!userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN])) {
     throw new RuntimeException('You are not authorised to view user lookup.', 403);
 }
 
@@ -25,7 +25,7 @@ $params = [];
 if (userRole($authUser) === DYNABASE_ROLE_PMS_ADMIN) {
     $where .= ' AND parent_pms_admin_id = ? AND role = ?';
     $types .= 'is';
-    array_push($params, (int) $authUser['id'], DYNABASE_ROLE_USER);
+    array_push($params, (int) $authUser['id'], DYNABASE_ROLE_PMS_USER);
 } elseif ($role !== '') {
     if (!in_array($role, DYNABASE_ROLES, true)) {
         throw new RuntimeException('Invalid role filter.', 422);

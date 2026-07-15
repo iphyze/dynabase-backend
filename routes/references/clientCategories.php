@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../includes/dbHelpers.php';
 require_once __DIR__ . '/../../includes/ownership.php';
 require_once __DIR__ . '/../../includes/validation.php';
 require_once __DIR__ . '/../../includes/audit.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 $authUser = authenticateUser();
 $method = requestMethod();
@@ -40,7 +41,7 @@ if ($method === 'GET') {
 }
 
 if ($method === 'POST') {
-    requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_USER]);
+    requirePermission($conn, $authUser, 'clients.create');
     $payload = readJsonBody();
     $categoryName = requireStringField($payload, 'category_name', 'Category name');
 

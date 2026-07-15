@@ -93,7 +93,7 @@ try {
             }
 
             $resolvedParentPmsAdminId = null;
-            if ($newRole === DYNABASE_ROLE_USER) {
+            if ($newRole === DYNABASE_ROLE_PMS_USER) {
                 if (userRole($actor) === DYNABASE_ROLE_PMS_ADMIN) {
                     $resolvedParentPmsAdminId = (int) $actor['id'];
                 } else {

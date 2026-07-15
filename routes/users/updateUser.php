@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../includes/connection.php';
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/audit.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 use Respect\Validation\Validator as v;
 
@@ -18,6 +19,8 @@ $lastName = cleanString($data['last_name'] ?? '');
 $role = isset($data['role']) ? cleanString($data['role']) : null;
 $requestedPmsCapability = ($data['is_pms_admin'] ?? false) === true || (int) ($data['is_pms_admin'] ?? 0) === 1;
 $status = isset($data['status']) ? cleanString($data['status']) : null;
+$submittedPermissionKeys = $data['permission_keys'] ?? null;
+
 $parentPmsAdminId = isset($data['parent_pms_admin_id']) && $data['parent_pms_admin_id'] !== ''
     ? (int) $data['parent_pms_admin_id']
     : null;
@@ -82,7 +85,7 @@ if ($nextStatus !== (string) $target['status'] && !canManageUserStatus($actor, $
 }
 
 $resolvedParentPmsAdminId = null;
-if ($nextRole === DYNABASE_ROLE_USER) {
+if ($nextRole === DYNABASE_ROLE_PMS_USER) {
     if ($actorRole === DYNABASE_ROLE_PMS_ADMIN) {
         $resolvedParentPmsAdminId = (int) $actor['id'];
     } else {
@@ -103,6 +106,8 @@ if ($nextRole === DYNABASE_ROLE_USER) {
     }
 }
 
+$resolvedPermissionKeys = resolveSubmittedPermissions($conn, $actor, $nextRole, $submittedPermissionKeys);
+
 $actorId = (int) $actor['id'];
 $updateStmt = $conn->prepare(
     'UPDATE users
@@ -113,6 +118,8 @@ $updateStmt->bind_param('sssisiii', $firstName, $lastName, $nextRole, $nextIsPms
 $updateStmt->execute();
 $updateStmt->close();
 
+replaceUserPermissions($conn, $userId, $resolvedPermissionKeys, $actorId);
+
 writeAuditLog($conn, $actor, 'users.update', 'user', $userId, [
     'target_email' => $target['email'],
     'previous_role' => $target['role'],
@@ -120,6 +127,7 @@ writeAuditLog($conn, $actor, 'users.update', 'user', $userId, [
     'is_pms_admin' => $nextIsPmsAdmin === 1,
     'previous_status' => $target['status'],
     'new_status' => $nextStatus,
+    'permissions' => $resolvedPermissionKeys,
 ]);
 
 jsonResponse([
