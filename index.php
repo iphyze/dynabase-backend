@@ -24,6 +24,7 @@ $routes = [
     '/auth/accept-invitation' => 'routes/auth/acceptInvitation.php',
 
     '/users/list' => 'routes/users/listUsers.php',
+    '/users/show' => 'routes/users/showUser.php',
     '/users/pms-admins' => 'routes/users/listPmsAdmins.php',
     '/users/deactivate' => 'routes/users/deactivateUser.php',
     '/users/activate' => 'routes/users/activateUser.php',
@@ -192,6 +193,7 @@ function routePermissionForPath(string $path): string|array|null
 
         '/auth/invite-user' => 'users.invite',
         '/users/list' => 'users.view',
+        '/users/show' => 'users.edit',
         '/users/pms-admins' => ['users.invite', 'users.edit'],
         '/users/update' => 'users.edit',
         '/users/bulk-update' => 'users.edit',
@@ -199,7 +201,7 @@ function routePermissionForPath(string $path): string|array|null
         '/users/deactivate' => 'users.status',
         '/users/reset-password' => 'users.reset',
         '/users/export' => 'users.export',
-        '/users/permissions' => 'users.view',
+        '/users/permissions' => ['users.view', 'users.edit'],
 
         '/clients/list' => 'clients.view',
         '/clients/show' => 'clients.view',
