@@ -35,7 +35,7 @@ $accessibleCount = dbScalarInt(
 );
 
 if ($accessibleCount !== count($ids)) {
-    throw new RuntimeException('One or more selected influence logs are not accessible.', 403);
+    throw new RuntimeException('One or more selected influence logs were not found.', 404);
 }
 
 dbExecute(

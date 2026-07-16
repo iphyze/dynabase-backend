@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/giftLists.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
@@ -13,76 +14,110 @@ if (!isPmsWorkspaceUser($authUser)) {
 $giftYear = validateGiftYear($_GET['gift_year'] ?? date('Y'));
 $ownerPmsAdminId = resolveGiftOwnerPmsAdminId($conn, $authUser, null);
 
-$clientSummary = dbFetchOne(
-    $conn,
-    "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
-     FROM clients_table WHERE owner_pms_admin_id = ?",
-    'i',
-    [$ownerPmsAdminId]
-) ?? [];
-$keypersonSummary = dbFetchOne(
-    $conn,
-    "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
-     FROM keypersons_table WHERE owner_pms_admin_id = ?",
-    'i',
-    [$ownerPmsAdminId]
-) ?? [];
-$giftSummary = dbFetchOne(
-    $conn,
-    "SELECT COUNT(items.id) AS recipients,
-            COUNT(DISTINCT items.client_id) AS gift_clients,
-            MAX(items.updated_at) AS last_updated_at,
-            MAX(gl.id) AS gift_list_id
-     FROM gift_lists gl
-     LEFT JOIN gift_list_items items ON items.gift_list_id = gl.id
-     WHERE gl.gift_year = ? AND gl.owner_pms_admin_id = ?",
-    'ii',
-    [$giftYear, $ownerPmsAdminId]
-) ?? [];
-$rateRows = dbFetchAll(
-    $conn,
-    "SELECT items.gift_rate, COUNT(*) AS total
-     FROM gift_lists gl
-     INNER JOIN gift_list_items items ON items.gift_list_id = gl.id
-     WHERE gl.gift_year = ? AND gl.owner_pms_admin_id = ?
-     GROUP BY items.gift_rate",
-    'ii',
-    [$giftYear, $ownerPmsAdminId]
-);
-$rateBreakdown = array_fill_keys(DYNABASE_GIFT_RATES, 0);
-foreach ($rateRows as $row) {
-    $rate = (string) ($row['gift_rate'] ?? '');
-    if (array_key_exists($rate, $rateBreakdown)) $rateBreakdown[$rate] = (int) $row['total'];
+$access = [
+    'clients' => userHasPermission($conn, $authUser, 'clients.view'),
+    'keypersons' => userHasPermission($conn, $authUser, 'keypersons.view'),
+    'gift_lists' => userHasPermission($conn, $authUser, 'gift_lists.view'),
+    'team' => userHasPermission($conn, $authUser, 'users.view'),
+];
+
+$clientSummary = ['total' => 0, 'active' => 0];
+if ($access['clients']) {
+    $clientSummary = dbFetchOne(
+        $conn,
+        "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
+         FROM clients_table WHERE owner_pms_admin_id = ?",
+        'i',
+        [$ownerPmsAdminId]
+    ) ?? [];
 }
 
-$recentClients = dbFetchAll(
+$keypersonSummary = ['total' => 0, 'active' => 0];
+if ($access['keypersons']) {
+    $keypersonSummary = dbFetchOne(
+        $conn,
+        "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
+         FROM keypersons_table WHERE owner_pms_admin_id = ?",
+        'i',
+        [$ownerPmsAdminId]
+    ) ?? [];
+}
+
+$giftSummary = ['recipients' => 0, 'gift_clients' => 0, 'last_updated_at' => null, 'gift_list_id' => null];
+$rateBreakdown = array_fill_keys(DYNABASE_GIFT_RATES, 0);
+if ($access['gift_lists']) {
+    $giftSummary = dbFetchOne(
+        $conn,
+        "SELECT COUNT(items.id) AS recipients,
+                COUNT(DISTINCT items.client_id) AS gift_clients,
+                MAX(items.updated_at) AS last_updated_at,
+                MAX(gl.id) AS gift_list_id
+         FROM gift_lists gl
+         LEFT JOIN gift_list_items items ON items.gift_list_id = gl.id
+         WHERE gl.gift_year = ? AND gl.owner_pms_admin_id = ?",
+        'ii',
+        [$giftYear, $ownerPmsAdminId]
+    ) ?? [];
+    $rateRows = dbFetchAll(
+        $conn,
+        "SELECT items.gift_rate, COUNT(*) AS total
+         FROM gift_lists gl
+         INNER JOIN gift_list_items items ON items.gift_list_id = gl.id
+         WHERE gl.gift_year = ? AND gl.owner_pms_admin_id = ?
+         GROUP BY items.gift_rate",
+        'ii',
+        [$giftYear, $ownerPmsAdminId]
+    );
+    foreach ($rateRows as $row) {
+        $rate = (string) ($row['gift_rate'] ?? '');
+        if (array_key_exists($rate, $rateBreakdown)) {
+            $rateBreakdown[$rate] = (int) $row['total'];
+        }
+    }
+}
+
+$recentClients = $access['clients'] ? dbFetchAll(
     $conn,
     "SELECT id, clients_name, clients_category, clients_hq_location, status, updated_at, created_at
      FROM clients_table WHERE owner_pms_admin_id = ? AND status = 'active'
      ORDER BY COALESCE(updated_at, created_at) DESC, id DESC LIMIT 5",
     'i',
     [$ownerPmsAdminId]
-);
-$recentKeypersons = dbFetchAll(
-    $conn,
-    "SELECT k.id, k.key_person, k.title, k.clients_name, k.clients_category,
-            k.key_persons_email, k.key_persons_tel, k.updated_at, k.created_at,
-            items.gift_rate
-     FROM keypersons_table k
-     LEFT JOIN gift_lists gl ON gl.owner_pms_admin_id = k.owner_pms_admin_id AND gl.gift_year = ?
-     LEFT JOIN gift_list_items items ON items.gift_list_id = gl.id AND items.keyperson_id = k.id
-     WHERE k.owner_pms_admin_id = ? AND k.status = 'active'
-     ORDER BY COALESCE(k.updated_at, k.created_at) DESC, k.id DESC LIMIT 6",
-    'ii',
-    [$giftYear, $ownerPmsAdminId]
-);
+) : [];
+
+$recentKeypersons = [];
+if ($access['keypersons']) {
+    $giftSelect = $access['gift_lists'] ? 'items.gift_rate' : 'NULL AS gift_rate';
+    $giftJoin = $access['gift_lists']
+        ? 'LEFT JOIN gift_lists gl ON gl.owner_pms_admin_id = k.owner_pms_admin_id AND gl.gift_year = ? '
+            . 'LEFT JOIN gift_list_items items ON items.gift_list_id = gl.id AND items.keyperson_id = k.id'
+        : '';
+    $recentKeypersonTypes = $access['gift_lists'] ? 'ii' : 'i';
+    $recentKeypersonParams = $access['gift_lists']
+        ? [$giftYear, $ownerPmsAdminId]
+        : [$ownerPmsAdminId];
+
+    $recentKeypersons = dbFetchAll(
+        $conn,
+        "SELECT k.id, k.key_person, k.title, k.clients_name, k.clients_category,
+                k.key_persons_email, k.key_persons_tel, k.updated_at, k.created_at,
+                {$giftSelect}
+         FROM keypersons_table k
+         {$giftJoin}
+         WHERE k.owner_pms_admin_id = ? AND k.status = 'active'
+         ORDER BY COALESCE(k.updated_at, k.created_at) DESC, k.id DESC LIMIT 6",
+        $recentKeypersonTypes,
+        $recentKeypersonParams
+    );
+}
+
 $owner = dbFetchOne(
     $conn,
     'SELECT id, first_name, last_name, email, role, is_pms_admin FROM users WHERE id = ? LIMIT 1',
     'i',
     [$ownerPmsAdminId]
 );
-$teamSummary = dbFetchOne(
+$teamSummary = $access['team'] ? (dbFetchOne(
     $conn,
     "SELECT SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_members,
             SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_members
@@ -90,8 +125,8 @@ $teamSummary = dbFetchOne(
      WHERE parent_pms_admin_id = ? AND role = 'pms_user'",
     'i',
     [$ownerPmsAdminId]
-) ?? [];
-$recentGiftItems = dbFetchAll(
+) ?? []) : ['active_members' => 0, 'pending_members' => 0];
+$recentGiftItems = $access['gift_lists'] ? dbFetchAll(
     $conn,
     "SELECT items.id, items.gift_rate, items.notes, items.updated_at,
             c.clients_name, k.key_person
@@ -104,7 +139,7 @@ $recentGiftItems = dbFetchAll(
      LIMIT 5",
     'ii',
     [$giftYear, $ownerPmsAdminId]
-);
+) : [];
 $recipients = (int) ($giftSummary['recipients'] ?? 0);
 $activeKeypersons = (int) ($keypersonSummary['active'] ?? 0);
 $activeClients = (int) ($clientSummary['active'] ?? 0);
@@ -116,6 +151,7 @@ jsonResponse([
     'message' => 'PMS dashboard retrieved successfully.',
     'data' => [
         'gift_year' => $giftYear,
+        'access' => $access,
         'owner' => $owner ? [
             'id' => (int) $owner['id'],
             'name' => trim((string) $owner['first_name'] . ' ' . (string) $owner['last_name']),

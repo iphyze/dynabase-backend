@@ -85,7 +85,7 @@ try {
         $stmt->close();
     }
 
-    replaceUserPermissions($conn, (int) $userId, $resolvedPermissionKeys, (int) $actor['id']);
+    replaceUserPermissions($conn, (int) $userId, $resolvedPermissionKeys, (int) $actor['id'], $role);
 
     $cancelStmt = $conn->prepare('UPDATE user_invitations SET status = "cancelled" WHERE email = ? AND status = "pending"');
     $cancelStmt->bind_param('s', $email);

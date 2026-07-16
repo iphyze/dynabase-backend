@@ -8,7 +8,6 @@ require_once __DIR__ . '/../../includes/audit.php';
 
 requireMethod('POST');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN], 'Only Super Admins and Admins can update documents.');
 assertDocumentRevisionSchema($conn);
 
 $id = (int) ($_POST['id'] ?? 0);

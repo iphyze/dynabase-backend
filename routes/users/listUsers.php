@@ -41,10 +41,6 @@ if (userRole($actor) === DYNABASE_ROLE_PMS_ADMIN) {
     $types .= 'i';
 }
 
-if (userRole($actor) === DYNABASE_ROLE_ADMIN) {
-    $where .= ' AND u.role IN ("admin", "pms_admin", "pms_user", "user")';
-}
-
 if ($search !== '') {
     $where .= ' AND (u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ?)';
     $term = '%' . $search . '%';

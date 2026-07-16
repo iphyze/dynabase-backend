@@ -8,7 +8,6 @@ require_once __DIR__ . '/../../includes/documents.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN], 'Only Super Admins and Admins can access Documents.');
 
 $q = lookupSearchTerm();
 $documentType = cleanString($_GET['document_type'] ?? $_GET['type'] ?? '');

@@ -5,14 +5,13 @@ require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/dbHelpers.php';
 require_once __DIR__ . '/../../includes/tenderAnalytics.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-requireRole(
-    $authUser,
-    [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN],
-    'This dashboard is only available to Super Admins and Admins.'
-);
+if (isPmsWorkspaceUser($authUser)) {
+    throw new RuntimeException('Use the PMS dashboard for this workspace account.', 403);
+}
 
 function dashboardTableExists(mysqli $conn, string $table): bool
 {
@@ -93,42 +92,68 @@ function dashboardSixMonthTrend(array $rows): array
 
 $currentYear = (int) date('Y');
 $selectedTenderYear = dynabaseTenderAnalyticsYearFilter($_GET['year'] ?? 'all');
-try {
-    $tenderIntelligence = dynabaseTenderAnalyticsOverview($conn, $selectedTenderYear);
-} catch (Throwable $exception) {
-    // A malformed legacy tender date or an older database schema must not take
-    // down the complete Admin dashboard. Log the private error and return a
-    // stable empty analytics payload while the remaining dashboard loads.
-    error_log('[Dynabase Dashboard Tender Analytics] ' . $exception->getMessage());
-    $tenderIntelligence = dynabaseTenderAnalyticsEmptyOverview($selectedTenderYear);
+
+$access = [
+    'clients' => userHasPermission($conn, $authUser, 'clients.view'),
+    'keypersons' => userHasPermission($conn, $authUser, 'keypersons.view'),
+    'tenders' => userHasPermission($conn, $authUser, 'tenders.view'),
+    'users' => userHasPermission($conn, $authUser, 'users.view'),
+    'documents' => userHasPermission($conn, $authUser, 'documents.view'),
+    'submission_register' => userHasPermission($conn, $authUser, 'submission_register.view'),
+    'prequalifications' => userHasPermission($conn, $authUser, 'prequalifications.view'),
+    'client_surveys' => userHasPermission($conn, $authUser, 'client_surveys.view'),
+    'web_of_influence' => userHasPermission($conn, $authUser, 'web_of_influence.view'),
+    'influence_logs' => userHasPermission($conn, $authUser, 'influence_logs.view'),
+    'gift_lists' => userHasPermission($conn, $authUser, 'gift_lists.view'),
+    'audit' => userHasPermission($conn, $authUser, 'audit.view'),
+];
+
+$tenderIntelligence = dynabaseTenderAnalyticsEmptyOverview($selectedTenderYear);
+if ($access['tenders']) {
+    try {
+        $tenderIntelligence = dynabaseTenderAnalyticsOverview($conn, $selectedTenderYear);
+    } catch (Throwable $exception) {
+        error_log('[Dynabase Dashboard Tender Analytics] ' . $exception->getMessage());
+    }
 }
 
-$clientSummary = dashboardSafeOne(
-    $conn,
-    "SELECT COUNT(*) AS total,
-            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
-            SUM(CASE WHEN status <> 'active' THEN 1 ELSE 0 END) AS inactive
-     FROM clients_table"
-);
-$keypersonSummary = dashboardSafeOne(
-    $conn,
-    "SELECT COUNT(*) AS total,
-            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
-            SUM(CASE WHEN status <> 'active' THEN 1 ELSE 0 END) AS inactive
-     FROM keypersons_table"
-);
+$clientSummary = ['total' => 0, 'active' => 0, 'inactive' => 0];
+if ($access['clients']) {
+    $clientSummary = dashboardSafeOne(
+        $conn,
+        "SELECT COUNT(*) AS total,
+                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN status <> 'active' THEN 1 ELSE 0 END) AS inactive
+         FROM clients_table"
+    );
+}
+
+$keypersonSummary = ['total' => 0, 'active' => 0, 'inactive' => 0];
+if ($access['keypersons']) {
+    $keypersonSummary = dashboardSafeOne(
+        $conn,
+        "SELECT COUNT(*) AS total,
+                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN status <> 'active' THEN 1 ELSE 0 END) AS inactive
+         FROM keypersons_table"
+    );
+}
+
 $tenderSummary = $tenderIntelligence['summary'] ?? [];
-$userSummary = dashboardSafeOne(
-    $conn,
-    "SELECT COUNT(*) AS total,
-            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
-            SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
-            SUM(CASE WHEN role = 'pms_admin' OR is_pms_admin = 1 THEN 1 ELSE 0 END) AS pms_admins
-     FROM users"
-);
+$userSummary = ['total' => 0, 'active' => 0, 'pending' => 0, 'pms_admins' => 0];
+if ($access['users']) {
+    $userSummary = dashboardSafeOne(
+        $conn,
+        "SELECT COUNT(*) AS total,
+                SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                SUM(CASE WHEN role = 'pms_admin' OR is_pms_admin = 1 THEN 1 ELSE 0 END) AS pms_admins
+         FROM users"
+    );
+}
 
 $documentSummary = ['active' => 0, 'recent' => 0];
-if (dashboardTableExists($conn, 'document_table')) {
+if ($access['documents'] && dashboardTableExists($conn, 'document_table')) {
     $documentStatusColumn = dashboardColumnExists($conn, 'document_table', 'status');
     $documentSummary = dashboardSafeOne(
         $conn,
@@ -142,8 +167,21 @@ if (dashboardTableExists($conn, 'document_table')) {
     );
 }
 
+$submissionSummary = ['total' => 0, 'ongoing' => 0, 'completed' => 0, 'recent' => 0];
+if ($access['submission_register'] && dashboardTableExists($conn, 'submission_registers')) {
+    $submissionSummary = dashboardSafeOne(
+        $conn,
+        "SELECT COUNT(*) AS total,
+                SUM(CASE WHEN status = 'Ongoing' THEN 1 ELSE 0 END) AS ongoing,
+                SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) AS completed,
+                SUM(CASE WHEN updated_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS recent
+         FROM submission_registers
+         WHERE record_status = 'active'"
+    );
+}
+
 $prequalificationSummary = ['active' => 0, 'linked' => 0];
-if (dashboardTableExists($conn, 'prequalification_table')) {
+if ($access['prequalifications'] && dashboardTableExists($conn, 'prequalification_table')) {
     $hasRecordStatus = dashboardColumnExists($conn, 'prequalification_table', 'record_status');
     $prequalificationSummary = dashboardSafeOne(
         $conn,
@@ -156,7 +194,7 @@ if (dashboardTableExists($conn, 'prequalification_table')) {
 }
 
 $surveySummary = ['responses' => 0, 'reviewed' => 0, 'pending_review' => 0, 'average_score' => 0, 'recent' => 0, 'active_links' => 0];
-if (dashboardTableExists($conn, 'clients_survey_form')) {
+if ($access['client_surveys'] && dashboardTableExists($conn, 'clients_survey_form')) {
     $hasDeletedAt = dashboardColumnExists($conn, 'clients_survey_form', 'deleted_at');
     $hasScore = dashboardColumnExists($conn, 'clients_survey_form', 'overall_score');
     $hasResponseStatus = dashboardColumnExists($conn, 'clients_survey_form', 'response_status');
@@ -173,19 +211,19 @@ if (dashboardTableExists($conn, 'clients_survey_form')) {
                 SUM(CASE WHEN createdAt >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS recent
          FROM clients_survey_form {$where}"
     );
-}
-if (dashboardTableExists($conn, 'client_survey_invitations')) {
-    $linkSummary = dashboardSafeOne(
-        $conn,
-        "SELECT COUNT(*) AS active_links
-         FROM client_survey_invitations
-         WHERE status = 'active' AND expires_at >= NOW() AND submission_count < max_submissions"
-    );
-    $surveySummary['active_links'] = (int) ($linkSummary['active_links'] ?? 0);
+    if (dashboardTableExists($conn, 'client_survey_invitations')) {
+        $linkSummary = dashboardSafeOne(
+            $conn,
+            "SELECT COUNT(*) AS active_links
+             FROM client_survey_invitations
+             WHERE status = 'active' AND expires_at >= NOW() AND submission_count < max_submissions"
+        );
+        $surveySummary['active_links'] = (int) ($linkSummary['active_links'] ?? 0);
+    }
 }
 
 $influenceSummary = ['mapped' => 0, 'high_influence' => 0, 'recommenders' => 0, 'projects' => 0, 'logs' => 0];
-if (dashboardTableExists($conn, 'web_of_influence_table')) {
+if ($access['web_of_influence'] && dashboardTableExists($conn, 'web_of_influence_table')) {
     $influenceSummary = dashboardSafeOne(
         $conn,
         "SELECT COUNT(*) AS mapped,
@@ -196,13 +234,13 @@ if (dashboardTableExists($conn, 'web_of_influence_table')) {
          WHERE record_status = 'active'"
     );
 }
-if (dashboardTableExists($conn, 'log_table')) {
+if ($access['influence_logs'] && dashboardTableExists($conn, 'log_table')) {
     $logSummary = dashboardSafeOne($conn, 'SELECT COUNT(*) AS logs FROM log_table');
     $influenceSummary['logs'] = (int) ($logSummary['logs'] ?? 0);
 }
 
 $giftSummary = ['recipients' => 0, 'lists' => 0, 'clients' => 0];
-if (dashboardTableExists($conn, 'gift_lists') && dashboardTableExists($conn, 'gift_list_items')) {
+if ($access['gift_lists'] && dashboardTableExists($conn, 'gift_lists') && dashboardTableExists($conn, 'gift_list_items')) {
     $giftSummary = dashboardSafeOne(
         $conn,
         "SELECT COUNT(DISTINCT gl.id) AS lists,
@@ -216,44 +254,62 @@ if (dashboardTableExists($conn, 'gift_lists') && dashboardTableExists($conn, 'gi
     );
 }
 
-$pipelineStages = $tenderIntelligence['progress'] ?? [];
-$pipelineTotal = (int) (($tenderIntelligence['summary']['total'] ?? 0));
-
-$recentTenderCandidates = dashboardSafeAll(
-    $conn,
-    "SELECT p.id, p.code, p.tender_code, p.project_title, p.project_client, p.project_city, p.project_country,
-            p.project_importance, p.progress, p.project_status, p.tender_due, p.tender_received_date,
-            p.updated_at, p.created_at
-     FROM project_info_table p
-     WHERE p.record_status = 'active'
-     ORDER BY COALESCE(p.updated_at, p.created_at) DESC, p.id DESC"
-);
-$recentTenders = array_slice(
-    dynabaseTenderAnalyticsFilterRows($recentTenderCandidates, $selectedTenderYear),
-    0,
-    6
-);
-foreach ($recentTenders as &$tender) {
-    $tender['id'] = (int) ($tender['id'] ?? 0);
-    $tender['code'] = isset($tender['code']) ? (int) $tender['code'] : null;
+$pipelineStages = $access['tenders'] ? ($tenderIntelligence['progress'] ?? []) : [];
+$pipelineTotal = $access['tenders'] ? (int) (($tenderIntelligence['summary']['total'] ?? 0)) : 0;
+$recentTenders = [];
+if ($access['tenders']) {
+    $recentTenderCandidates = dashboardSafeAll(
+        $conn,
+        "SELECT p.id, p.code, p.tender_code, p.project_title, p.project_client, p.project_city, p.project_country,
+                p.project_importance, p.progress, p.project_status, p.tender_due, p.tender_received_date,
+                p.updated_at, p.created_at
+         FROM project_info_table p
+         WHERE p.record_status = 'active'
+         ORDER BY COALESCE(p.updated_at, p.created_at) DESC, p.id DESC"
+    );
+    $recentTenders = array_slice(dynabaseTenderAnalyticsFilterRows($recentTenderCandidates, $selectedTenderYear), 0, 6);
+    foreach ($recentTenders as &$tender) {
+        $tender['id'] = (int) ($tender['id'] ?? 0);
+        $tender['code'] = isset($tender['code']) ? (int) $tender['code'] : null;
+    }
+    unset($tender);
 }
-unset($tender);
 
-$recentClients = dashboardSafeAll(
-    $conn,
-    "SELECT id, clients_name, clients_category, clients_hq_location, clients_email, status, updated_at, created_at
-     FROM clients_table
-     WHERE status = 'active'
-     ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
-     LIMIT 5"
-);
-foreach ($recentClients as &$client) {
-    $client['id'] = (int) ($client['id'] ?? 0);
+$recentClients = [];
+if ($access['clients']) {
+    $recentClients = dashboardSafeAll(
+        $conn,
+        "SELECT id, clients_name, clients_category, clients_hq_location, clients_email, status, updated_at, created_at
+         FROM clients_table
+         WHERE status = 'active'
+         ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+         LIMIT 5"
+    );
+    foreach ($recentClients as &$client) {
+        $client['id'] = (int) ($client['id'] ?? 0);
+    }
+    unset($client);
 }
-unset($client);
+
+$recentSubmissions = [];
+if ($access['submission_register'] && dashboardTableExists($conn, 'submission_registers')) {
+    $recentSubmissions = dashboardSafeAll(
+        $conn,
+        "SELECT id, submission_reference, project_company_name, client_name, category,
+                date_submitted, mode_of_submission, status, updated_at, created_at
+         FROM submission_registers
+         WHERE record_status = 'active'
+         ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+         LIMIT 5"
+    );
+    foreach ($recentSubmissions as &$submission) {
+        $submission['id'] = (int) ($submission['id'] ?? 0);
+    }
+    unset($submission);
+}
 
 $recentActivity = [];
-if (dashboardTableExists($conn, 'audit_logs')) {
+if ($access['audit'] && dashboardTableExists($conn, 'audit_logs')) {
     $recentActivity = dashboardSafeAll(
         $conn,
         "SELECT a.id, a.action, a.entity_type, a.entity_id, a.created_at,
@@ -278,8 +334,9 @@ jsonResponse([
     'data' => [
         'generated_at' => date(DATE_ATOM),
         'current_year' => $currentYear,
-        'selected_tender_year' => $selectedTenderYear > 0 ? $selectedTenderYear : 'all',
-        'available_tender_years' => $tenderIntelligence['available_years'] ?? [],
+        'access' => $access,
+        'selected_tender_year' => $access['tenders'] && $selectedTenderYear > 0 ? $selectedTenderYear : 'all',
+        'available_tender_years' => $access['tenders'] ? ($tenderIntelligence['available_years'] ?? []) : [],
         'summary' => [
             'clients' => (int) ($clientSummary['active'] ?? 0),
             'all_clients' => (int) ($clientSummary['total'] ?? 0),
@@ -295,6 +352,10 @@ jsonResponse([
             'pms_admins' => (int) ($userSummary['pms_admins'] ?? 0),
             'documents' => (int) ($documentSummary['active'] ?? 0),
             'recent_documents' => (int) ($documentSummary['recent'] ?? 0),
+            'submissions' => (int) ($submissionSummary['total'] ?? 0),
+            'ongoing_submissions' => (int) ($submissionSummary['ongoing'] ?? 0),
+            'completed_submissions' => (int) ($submissionSummary['completed'] ?? 0),
+            'recent_submissions' => (int) ($submissionSummary['recent'] ?? 0),
             'prequalifications' => (int) ($prequalificationSummary['active'] ?? 0),
             'linked_prequalifications' => (int) ($prequalificationSummary['linked'] ?? 0),
             'survey_responses' => (int) ($surveySummary['responses'] ?? 0),
@@ -309,15 +370,16 @@ jsonResponse([
             'gift_lists' => (int) ($giftSummary['lists'] ?? 0),
             'gift_clients' => (int) ($giftSummary['clients'] ?? 0),
         ],
-        'tender_intelligence' => $tenderIntelligence,
+        'tender_intelligence' => $access['tenders'] ? $tenderIntelligence : dynabaseTenderAnalyticsEmptyOverview($selectedTenderYear),
         'pipeline' => [
             'total' => $pipelineTotal,
             'stages' => $pipelineStages,
-            'trend' => $tenderIntelligence['trend'] ?? [],
-            'selected_year' => $selectedTenderYear > 0 ? $selectedTenderYear : 'all',
+            'trend' => $access['tenders'] ? ($tenderIntelligence['trend'] ?? []) : [],
+            'selected_year' => $access['tenders'] && $selectedTenderYear > 0 ? $selectedTenderYear : 'all',
         ],
         'recent_tenders' => $recentTenders,
         'recent_clients' => $recentClients,
+        'recent_submissions' => $recentSubmissions,
         'recent_activity' => $recentActivity,
     ],
 ]);

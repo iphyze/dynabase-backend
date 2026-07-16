@@ -59,6 +59,8 @@ $routes = [
     '/gift-lists/update' => 'routes/gift-lists/update.php',
     '/gift-lists/delete' => 'routes/gift-lists/delete.php',
     '/gift-lists/bulk-delete' => 'routes/gift-lists/bulkDelete.php',
+    '/gift-lists/bulk-update' => 'routes/gift-lists/bulkUpdate.php',
+    '/gift-lists/update-item' => 'routes/gift-lists/updateItem.php',
     '/gift-lists/add-keypersons' => 'routes/gift-lists/addKeypersons.php',
     '/gift-lists/export' => 'routes/gift-lists/export.php',
 
@@ -131,6 +133,8 @@ $routes = [
     '/submission-register/create' => 'routes/submission-register/create.php',
     '/submission-register/update' => 'routes/submission-register/update.php',
     '/submission-register/delete' => 'routes/submission-register/delete.php',
+    '/submission-register/bulk-delete' => 'routes/submission-register/bulkDelete.php',
+    '/submission-register/bulk-update-status' => 'routes/submission-register/bulkUpdateStatus.php',
     '/submission-register/export' => 'routes/submission-register/export.php',
     '/submission-register/updates/list' => 'routes/submission-register/updatesList.php',
     '/submission-register/updates/create' => 'routes/submission-register/updatesCreate.php',
@@ -197,7 +201,7 @@ function routePermissionForPath(string $path): string|array|null
         '/users/show' => 'users.edit',
         '/users/pms-admins' => ['users.invite', 'users.edit'],
         '/users/update' => 'users.edit',
-        '/users/bulk-update' => 'users.edit',
+        '/users/bulk-update' => ['users.edit', 'users.status'],
         '/users/activate' => 'users.status',
         '/users/deactivate' => 'users.status',
         '/users/reset-password' => 'users.reset',
@@ -220,7 +224,7 @@ function routePermissionForPath(string $path): string|array|null
         '/keypersons/update' => 'keypersons.edit',
         '/keypersons/activate' => 'keypersons.edit',
         '/keypersons/delete' => 'keypersons.delete',
-        '/keypersons/bulk-update' => 'keypersons.edit',
+        '/keypersons/bulk-update' => ['keypersons.edit', 'gift_lists.edit'],
         '/keypersons/export' => 'keypersons.export',
 
         '/gift-lists/list' => 'gift_lists.view',
@@ -231,15 +235,8 @@ function routePermissionForPath(string $path): string|array|null
         '/gift-lists/add-keypersons' => 'gift_lists.edit',
         '/gift-lists/delete' => 'gift_lists.delete',
         '/gift-lists/bulk-delete' => 'gift_lists.delete',
+        '/gift-lists/bulk-update' => 'gift_lists.edit',
         '/gift-lists/export' => 'gift_lists.export',
-
-        '/tenders/list' => 'tenders.view',
-        '/tenders/show' => 'tenders.view',
-        '/tenders/create' => 'tenders.create',
-        '/tenders/update' => 'tenders.edit',
-        '/tenders/delete' => 'tenders.delete',
-        '/tenders/bulk-delete' => 'tenders.delete',
-        '/tenders/export' => 'tenders.export',
 
         '/documents/list' => 'documents.view',
         '/documents/show' => 'documents.view',
@@ -257,7 +254,6 @@ function routePermissionForPath(string $path): string|array|null
         '/documents/update' => 'documents.edit',
         '/documents/delete' => 'documents.delete',
         '/documents/bulk-delete' => 'documents.delete',
-        '/documents/export' => 'documents.export',
 
         '/prequalifications/list' => 'prequalifications.view',
         '/prequalifications/show' => 'prequalifications.view',
@@ -267,7 +263,6 @@ function routePermissionForPath(string $path): string|array|null
         '/prequalifications/bulk-delete' => 'prequalifications.delete',
         '/prequalifications/export' => 'prequalifications.export',
 
-        '/submission-register/options' => 'submission_register.view',
         '/submission-register/list' => 'submission_register.view',
         '/submission-register/overview' => 'submission_register.view',
         '/submission-register/show' => 'submission_register.view',
@@ -275,6 +270,8 @@ function routePermissionForPath(string $path): string|array|null
         '/submission-register/create' => 'submission_register.create',
         '/submission-register/update' => 'submission_register.edit',
         '/submission-register/delete' => 'submission_register.delete',
+        '/submission-register/bulk-delete' => 'submission_register.delete',
+        '/submission-register/bulk-update-status' => 'submission_register.edit',
         '/submission-register/export' => 'submission_register.export',
         '/submission-register/updates/list' => 'submission_register.view',
         '/submission-register/updates/create' => 'submission_register.comment',
@@ -298,7 +295,6 @@ function routePermissionForPath(string $path): string|array|null
 
         '/web-of-influence/list' => 'web_of_influence.view',
         '/web-of-influence/show' => 'web_of_influence.view',
-        '/web-of-influence/options' => 'web_of_influence.view',
         '/web-of-influence/create' => 'web_of_influence.create',
         '/web-of-influence/update' => 'web_of_influence.edit',
         '/web-of-influence/delete' => 'web_of_influence.delete',
@@ -324,16 +320,63 @@ function routePermissionForPath(string $path): string|array|null
         '/audit/list' => 'audit.view',
         '/audit/export-csv' => 'audit.export',
 
-        '/lookups/clients' => 'clients.view',
-        '/lookups/keypersons' => 'keypersons.view',
-        '/lookups/projects' => ['tenders.view', 'documents.view', 'prequalifications.view', 'web_of_influence.view'],
+        // Operational lookup endpoints inherit access from the workflow that consumes them.
+        // Create/edit permissions already imply the corresponding view permission through the
+        // central dependency map, so lookup access can remain concise and predictable.
+        '/lookups/clients' => [
+            'clients.view',
+            'keypersons.view',
+            'gift_lists.view',
+            'tenders.view',
+            'prequalifications.view',
+            'submission_register.view',
+            'influence_logs.view',
+            'web_of_influence.view',
+            'client_surveys.view',
+        ],
+        '/lookups/keypersons' => [
+            'keypersons.view',
+            'gift_lists.view',
+            'tenders.view',
+            'prequalifications.view',
+            'influence_logs.view',
+            'web_of_influence.view',
+        ],
+        '/lookups/projects' => [
+            'tenders.view',
+            'tenders.create',
+            'tenders.edit',
+            'documents.view',
+            'documents.create',
+            'documents.edit',
+            'prequalifications.view',
+            'prequalifications.create',
+            'prequalifications.edit',
+            'submission_register.view',
+            'submission_register.create',
+            'submission_register.edit',
+            'web_of_influence.view',
+            'web_of_influence.create',
+            'web_of_influence.edit',
+            'client_surveys.view',
+            'client_surveys.create',
+        ],
         '/lookups/documents' => 'documents.view',
         '/lookups/users' => 'users.view',
-        '/lookups/pms-admins' => ['users.invite', 'users.edit'],
-        '/lookups/tender-sections' => 'tenders.view',
-        '/references/project-cities' => ['tenders.view', 'prequalifications.view'],
-        '/references/tender-sections' => 'tenders.view',
-        '/references/project-options' => ['tenders.view', 'prequalifications.view'],
+        '/lookups/pms-admins' => [
+            'users.view',
+            'clients.view',
+            'keypersons.view',
+            'gift_lists.view',
+            'tenders.view',
+            'prequalifications.view',
+            'influence_logs.view',
+            'web_of_influence.view',
+        ],
+
+        // Static/reference options are intentionally absent from this permission map. Their
+        // route files still require an authenticated session, while any write operation (for
+        // example creating a client category) performs its own exact permission check.
     ];
 
     return $exact[$path] ?? null;

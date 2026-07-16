@@ -34,7 +34,7 @@ if (!$target) {
 
 $target = normalizeUserRow($target);
 if (!canActivateUser($actor, $target)) {
-    throw new RuntimeException('You are not allowed to activate this user.', 403);
+    throw new RuntimeException('User not found.', 404);
 }
 
 $actorId = (int) $actor['id'];

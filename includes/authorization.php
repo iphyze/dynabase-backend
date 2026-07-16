@@ -51,7 +51,6 @@ function canInviteRole(array $actor, string $targetRole): bool
 
     return match ($actorRole) {
         DYNABASE_ROLE_SUPER_ADMIN => in_array($targetRole, DYNABASE_ROLES, true),
-        DYNABASE_ROLE_ADMIN => in_array($targetRole, [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER, DYNABASE_ROLE_USER], true),
         DYNABASE_ROLE_PMS_ADMIN => $targetRole === DYNABASE_ROLE_PMS_USER,
         default => false,
     };
@@ -105,7 +104,7 @@ function resolveOwnerPmsAdminId(array $authUser): ?int
 
 function canViewUserList(array $actor): bool
 {
-    return userHasRole($actor, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN]);
+    return userHasRole($actor, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_PMS_ADMIN]);
 }
 
 function canManageUserStatus(array $actor, array $target): bool
@@ -119,10 +118,6 @@ function canManageUserStatus(array $actor, array $target): bool
 
     if ($actorRole === DYNABASE_ROLE_SUPER_ADMIN) {
         return true;
-    }
-
-    if ($actorRole === DYNABASE_ROLE_ADMIN) {
-        return in_array($targetRole, [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER, DYNABASE_ROLE_USER], true);
     }
 
     if ($actorRole === DYNABASE_ROLE_PMS_ADMIN) {
@@ -167,7 +162,7 @@ function canResendUserInvitation(array $actor, array $target): bool
             && (int) ($target['parent_pms_admin_id'] ?? 0) === (int) $actor['id'];
     }
 
-    return userHasRole($actor, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
+    return userRole($actor) === DYNABASE_ROLE_SUPER_ADMIN;
 }
 
 function canUpdateUserProfile(array $actor, array $target): bool
@@ -177,10 +172,6 @@ function canUpdateUserProfile(array $actor, array $target): bool
 
     if ($actorRole === DYNABASE_ROLE_SUPER_ADMIN) {
         return true;
-    }
-
-    if ($actorRole === DYNABASE_ROLE_ADMIN) {
-        return in_array($targetRole, [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER, DYNABASE_ROLE_USER], true);
     }
 
     if ($actorRole === DYNABASE_ROLE_PMS_ADMIN) {
@@ -195,7 +186,6 @@ function allowedManagedRoles(array $actor): array
 {
     return match (userRole($actor)) {
         DYNABASE_ROLE_SUPER_ADMIN => DYNABASE_ROLES,
-        DYNABASE_ROLE_ADMIN => [DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER, DYNABASE_ROLE_USER],
         DYNABASE_ROLE_PMS_ADMIN => [DYNABASE_ROLE_PMS_USER],
         default => [],
     };

@@ -7,7 +7,6 @@ require_once __DIR__ . '/../../../includes/audit.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
 $id = requiredIntFromRequest('id');
 $record = assertSurveyAccessible($conn, $authUser, $id);
 

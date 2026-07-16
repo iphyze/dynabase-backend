@@ -11,7 +11,6 @@ require_once __DIR__ . '/../../includes/notifications.php';
 requireMethod('GET');
 
 $actor = authenticateUser();
-requireRole($actor, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
 
 $settings = loadAppSettings($conn);
 $lastUpdate = appSettingsLastUpdate($conn);

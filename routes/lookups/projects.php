@@ -15,7 +15,7 @@ $division = cleanString($_GET['division'] ?? '');
 $limit = lookupLimit(20, 50);
 $offset = lookupOffset();
 
-$where = ' WHERE 1 = 1';
+$where = " WHERE COALESCE(record_status, 'active') = 'active'";
 $types = '';
 $params = [];
 
@@ -47,7 +47,7 @@ if ($division !== '') {
 $total = dbScalarInt($conn, "SELECT COUNT(*) AS total FROM project_info_table{$where}", $types, $params);
 $rows = dbFetchAll(
     $conn,
-    "SELECT id, project_title, tender_code, project_client, project_country, project_city,
+    "SELECT id, code, project_title, tender_code, project_client, project_country, project_city,
             division, project_status, progress
      FROM project_info_table{$where}
      ORDER BY created_at DESC, id DESC
@@ -63,6 +63,7 @@ $data = array_map(static function (array $row): array {
 
     return optionRow((int) $row['id'], $label, [
         'id' => (int) $row['id'],
+        'code' => $row['code'],
         'project_title' => $row['project_title'],
         'tender_code' => $row['tender_code'],
         'project_client' => $row['project_client'],

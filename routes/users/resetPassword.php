@@ -35,7 +35,7 @@ if (!$target) {
 
 $target = normalizeUserRow($target);
 if (!canResetUserPassword($actor, $target)) {
-    throw new RuntimeException('You are not allowed to reset this user password.', 403);
+    throw new RuntimeException('User not found.', 404);
 }
 
 $temporaryPassword = 'Dynabase@' . random_int(100000, 999999) . substr(bin2hex(random_bytes(2)), 0, 4);

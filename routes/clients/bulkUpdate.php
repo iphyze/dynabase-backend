@@ -38,48 +38,85 @@ try {
 
         if ($action === 'activate' || $action === 'deactivate') {
             $status = $action === 'activate' ? 'active' : 'deactivated';
-            dbExecute(
-                $conn,
-                'UPDATE clients_table SET status = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [$recordScopeSql, $recordTypes, $recordParams] = appendScopedWhere(
+                $authUser,
+                '',
                 'ssii',
                 [$status, $actorEmail, $actorId, $id]
+            );
+            dbExecute(
+                $conn,
+                "UPDATE clients_table SET status = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?{$recordScopeSql}",
+                $recordTypes,
+                $recordParams
             )->close();
 
             if ($action === 'deactivate') {
-                dbExecute(
-                    $conn,
-                    "UPDATE keypersons_table SET status = 'deactivated', updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE clients_id = ?",
+                [$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere(
+                    $authUser,
+                    '',
                     'sii',
                     [$actorEmail, $actorId, $id]
+                );
+                dbExecute(
+                    $conn,
+                    "UPDATE keypersons_table
+                     SET status = 'deactivated', updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
+                     WHERE clients_id = ?{$scopeSql}",
+                    $scopeTypes,
+                    $scopeParams
                 )->close();
             }
         }
 
         if ($action === 'update_category') {
             $category = requireStringField($payload, 'clients_category', 'Client category');
-            dbExecute(
-                $conn,
-                'UPDATE clients_table SET clients_category = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [$recordScopeSql, $recordTypes, $recordParams] = appendScopedWhere(
+                $authUser,
+                '',
                 'ssii',
                 [$category, $actorEmail, $actorId, $id]
+            );
+            dbExecute(
+                $conn,
+                "UPDATE clients_table SET clients_category = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?{$recordScopeSql}",
+                $recordTypes,
+                $recordParams
             )->close();
-            dbExecute(
-                $conn,
-                'UPDATE keypersons_table SET clients_category = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE clients_id = ?',
+            [$keypersonScopeSql, $keypersonTypes, $keypersonParams] = appendScopedWhere(
+                $authUser,
+                '',
                 'ssii',
                 [$category, $actorEmail, $actorId, $id]
+            );
+            dbExecute(
+                $conn,
+                "UPDATE keypersons_table
+                 SET clients_category = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE clients_id = ?{$keypersonScopeSql}",
+                $keypersonTypes,
+                $keypersonParams
             )->close();
-            dbExecute(
-                $conn,
-                'UPDATE log_table SET clients_category = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE clients_id = ?',
+
+            [$logScopeSql, $logTypes, $logParams] = appendScopedWhere(
+                $authUser,
+                '',
                 'ssii',
                 [$category, $actorEmail, $actorId, $id]
+            );
+            dbExecute(
+                $conn,
+                "UPDATE log_table
+                 SET clients_category = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE clients_id = ?{$logScopeSql}",
+                $logTypes,
+                $logParams
             )->close();
         }
 
         if ($action === 'update_owner') {
             if (!isGlobalDataUser($authUser)) {
-                throw new RuntimeException('Only Super Admin and Admin can reassign client PMS ownership.', 403);
+                throw new RuntimeException('Your account cannot reassign client PMS ownership.', 403);
             }
             $ownerPmsAdminId = isset($payload['owner_pms_admin_id']) ? (int) $payload['owner_pms_admin_id'] : null;
             $ownerPmsAdminId = resolveAssignableOwnerPmsAdminId($conn, $authUser, $ownerPmsAdminId);

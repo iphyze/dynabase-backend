@@ -7,7 +7,6 @@ require_once __DIR__ . '/../../includes/pagination.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
 [$page, $limit, $offset] = paginationParams();
 
 $q = cleanString($_GET['q'] ?? $_GET['search'] ?? '');

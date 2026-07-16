@@ -7,7 +7,6 @@ require_once __DIR__ . '/../../../includes/audit.php';
 
 requireMethod('POST');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
 $payload = readJsonBody();
 $id = requiredIntFromPayload($payload, 'id', 'Survey response ID');
 $record = assertSurveyAccessible($conn, $authUser, $id);

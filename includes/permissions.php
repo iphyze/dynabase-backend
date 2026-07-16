@@ -111,34 +111,197 @@ function dynabasePermissionKeys(): array
             $keys[] = $item['key'];
         }
     }
+
     return array_values(array_unique($keys));
+}
+
+function dynabasePermissionKeysForSections(array $sections): array
+{
+    $catalog = dynabasePermissionCatalog();
+    $keys = [];
+
+    foreach ($sections as $section) {
+        foreach ($catalog[$section] ?? [] as $item) {
+            $keys[] = (string) $item['key'];
+        }
+    }
+
+    return array_values(array_unique($keys));
+}
+
+function dynabaseUserManagementPermissionKeys(): array
+{
+    return array_values(array_filter(
+        dynabasePermissionKeysForSections(['Administration']),
+        static fn (string $permission): bool => str_starts_with($permission, 'users.')
+    ));
+}
+
+function dynabaseAdministrationPermissionKeys(): array
+{
+    return dynabasePermissionKeysForSections(['Administration']);
+}
+
+function dynabasePmsRelationshipPermissionKeys(): array
+{
+    return dynabasePermissionKeysForSections(['Clients', 'Key Persons', 'Gift Lists']);
+}
+
+function dynabasePermissionDependencies(): array
+{
+    return [
+        'clients.create' => ['clients.view'],
+        'clients.edit' => ['clients.view'],
+        'clients.delete' => ['clients.view'],
+        'clients.export' => ['clients.view'],
+
+        'keypersons.create' => ['keypersons.view'],
+        'keypersons.edit' => ['keypersons.view'],
+        'keypersons.delete' => ['keypersons.view'],
+        'keypersons.export' => ['keypersons.view'],
+
+        'gift_lists.create' => ['gift_lists.view'],
+        'gift_lists.edit' => ['gift_lists.view'],
+        'gift_lists.delete' => ['gift_lists.view'],
+        'gift_lists.export' => ['gift_lists.view'],
+
+        'tenders.create' => ['tenders.view'],
+        'tenders.edit' => ['tenders.view'],
+        'tenders.delete' => ['tenders.view'],
+        'tenders.export' => ['tenders.view'],
+
+        'documents.create' => ['documents.view'],
+        'documents.edit' => ['documents.view'],
+        'documents.revisions' => ['documents.view'],
+        'documents.share' => ['documents.view'],
+        'documents.delete' => ['documents.view'],
+        'documents.export' => ['documents.view'],
+
+        'prequalifications.create' => ['prequalifications.view'],
+        'prequalifications.edit' => ['prequalifications.view'],
+        'prequalifications.delete' => ['prequalifications.view'],
+        'prequalifications.export' => ['prequalifications.view'],
+
+        'submission_register.create' => ['submission_register.view'],
+        'submission_register.edit' => ['submission_register.view'],
+        'submission_register.delete' => ['submission_register.view'],
+        'submission_register.comment' => ['submission_register.view'],
+        'submission_register.export' => ['submission_register.view'],
+        'submission_register.pdf' => ['submission_register.view'],
+
+        'client_surveys.create' => ['client_surveys.view'],
+        'client_surveys.delete' => ['client_surveys.view'],
+        'client_surveys.export' => ['client_surveys.view'],
+
+        'influence_logs.create' => ['influence_logs.view'],
+        'influence_logs.edit' => ['influence_logs.view'],
+        'influence_logs.delete' => ['influence_logs.view'],
+        'influence_logs.export' => ['influence_logs.view'],
+
+        'web_of_influence.create' => ['web_of_influence.view'],
+        'web_of_influence.edit' => ['web_of_influence.view'],
+        'web_of_influence.delete' => ['web_of_influence.view'],
+        'web_of_influence.export' => ['web_of_influence.view'],
+
+        'reports.export' => ['reports.view'],
+
+        'users.invite' => ['users.view'],
+        'users.edit' => ['users.view'],
+        'users.status' => ['users.view'],
+        'users.reset' => ['users.view'],
+        'users.export' => ['users.view'],
+        'email_templates.test' => ['email_templates.view'],
+        'settings.manage' => ['settings.view'],
+        'audit.export' => ['audit.view'],
+    ];
+}
+
+function normalisePermissionKeys(array $keys): array
+{
+    $valid = array_flip(dynabasePermissionKeys());
+    $clean = [];
+
+    foreach ($keys as $key) {
+        $key = trim((string) $key);
+        if ($key !== '' && isset($valid[$key])) {
+            $clean[$key] = true;
+        }
+    }
+
+    return array_keys($clean);
+}
+
+function expandPermissionDependencies(array $keys): array
+{
+    $selected = array_fill_keys(normalisePermissionKeys($keys), true);
+    $dependencies = dynabasePermissionDependencies();
+    $changed = true;
+
+    while ($changed) {
+        $changed = false;
+        foreach (array_keys($selected) as $permission) {
+            foreach ($dependencies[$permission] ?? [] as $requiredPermission) {
+                if (!isset($selected[$requiredPermission])) {
+                    $selected[$requiredPermission] = true;
+                    $changed = true;
+                }
+            }
+        }
+    }
+
+    return array_values(array_intersect(dynabasePermissionKeys(), array_keys($selected)));
+}
+
+function permissionCeilingForRole(string $role): array
+{
+    $all = dynabasePermissionKeys();
+    $workspace = dynabasePermissionKeysForSections(['Workspace']);
+    $relationship = dynabasePmsRelationshipPermissionKeys();
+    $pmsUserAdministration = ['users.view', 'users.invite', 'users.edit', 'users.status', 'users.reset'];
+
+    return match ($role) {
+        DYNABASE_ROLE_SUPER_ADMIN => $all,
+        DYNABASE_ROLE_ADMIN => array_values(array_diff($all, dynabaseUserManagementPermissionKeys())),
+        DYNABASE_ROLE_PMS_ADMIN => array_values(array_unique(array_merge($workspace, $relationship, $pmsUserAdministration))),
+        DYNABASE_ROLE_PMS_USER => array_values(array_unique(array_merge($workspace, $relationship))),
+        DYNABASE_ROLE_USER => array_values(array_diff($all, dynabaseAdministrationPermissionKeys())),
+        default => [],
+    };
+}
+
+function normalisePermissionsForRole(string $role, array $keys): array
+{
+    $ceiling = permissionCeilingForRole($role);
+    if ($ceiling === []) {
+        return [];
+    }
+
+    $selected = array_values(array_intersect(normalisePermissionKeys($keys), $ceiling));
+    $selected = expandPermissionDependencies($selected);
+
+    return array_values(array_intersect($selected, $ceiling));
 }
 
 function defaultPermissionsForRole(string $role): array
 {
-    $workspace = ['dashboard.view', 'notifications.view', 'global_search.use'];
-    $relationshipFull = [
+    $workspace = dynabasePermissionKeysForSections(['Workspace']);
+    $relationshipDefaults = [
         'clients.view', 'clients.create', 'clients.edit', 'clients.export',
         'keypersons.view', 'keypersons.create', 'keypersons.edit', 'keypersons.export',
         'gift_lists.view', 'gift_lists.create', 'gift_lists.edit', 'gift_lists.export',
     ];
-    $pmsUserAdmin = ['users.view', 'users.invite', 'users.edit', 'users.status', 'users.reset'];
-    $submissionPms = [
-        'submission_register.view',
-        'submission_register.create',
-        'submission_register.edit',
-        'submission_register.comment',
-        'submission_register.export',
-        'submission_register.pdf',
-    ];
+    $pmsUserAdministration = ['users.view', 'users.invite', 'users.edit', 'users.status', 'users.reset'];
 
-    return match ($role) {
-        DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN => dynabasePermissionKeys(),
-        DYNABASE_ROLE_PMS_ADMIN => array_values(array_unique(array_merge($workspace, $relationshipFull, $submissionPms, $pmsUserAdmin))),
-        DYNABASE_ROLE_PMS_USER => array_values(array_unique(array_merge($workspace, $relationshipFull, $submissionPms))),
+    $defaults = match ($role) {
+        DYNABASE_ROLE_SUPER_ADMIN => dynabasePermissionKeys(),
+        DYNABASE_ROLE_ADMIN => permissionCeilingForRole(DYNABASE_ROLE_ADMIN),
+        DYNABASE_ROLE_PMS_ADMIN => array_values(array_unique(array_merge($workspace, $relationshipDefaults, $pmsUserAdministration))),
+        DYNABASE_ROLE_PMS_USER => array_values(array_unique(array_merge($workspace, $relationshipDefaults))),
         DYNABASE_ROLE_USER => $workspace,
         default => [],
     };
+
+    return normalisePermissionsForRole($role, $defaults);
 }
 
 function permissionTableExists(mysqli $conn): bool
@@ -173,12 +336,14 @@ function userPermissionRows(mysqli $conn, int $userId): ?array
     $result = $stmt->get_result();
     $keys = [];
     $hasCustomRows = false;
+
     while ($row = $result->fetch_assoc()) {
         $hasCustomRows = true;
         if ((int) ($row['granted'] ?? 0) === 1) {
             $keys[] = (string) $row['permission_key'];
         }
     }
+
     $stmt->close();
     return $hasCustomRows ? $keys : null;
 }
@@ -192,19 +357,22 @@ function userEffectivePermissions(mysqli $conn, array $user): array
 
     $userId = (int) ($user['id'] ?? 0);
     $rows = $userId > 0 ? userPermissionRows($conn, $userId) : null;
-    $validKeys = dynabasePermissionKeys();
-    if ($rows !== null) {
-        return array_values(array_intersect($validKeys, array_unique($rows)));
-    }
+    $source = $rows ?? defaultPermissionsForRole($role);
 
-    return defaultPermissionsForRole($role);
+    return normalisePermissionsForRole($role, $source);
 }
 
 function userHasPermission(mysqli $conn, array $user, string $permission): bool
 {
-    if (userRole($user) === DYNABASE_ROLE_SUPER_ADMIN) {
+    $role = userRole($user);
+    if ($role === DYNABASE_ROLE_SUPER_ADMIN) {
         return true;
     }
+
+    if (!in_array($permission, permissionCeilingForRole($role), true)) {
+        return false;
+    }
+
     return in_array($permission, userEffectivePermissions($conn, $user), true);
 }
 
@@ -215,86 +383,88 @@ function requirePermission(mysqli $conn, array $user, string $permission, string
     }
 }
 
-function normalisePermissionKeys(array $keys): array
-{
-    $valid = dynabasePermissionKeys();
-    $clean = [];
-    foreach ($keys as $key) {
-        $key = trim((string) $key);
-        if ($key !== '' && in_array($key, $valid, true)) {
-            $clean[] = $key;
-        }
-    }
-    return array_values(array_unique($clean));
-}
-
 function permissionsAssignableToRole(string $role): array
 {
-    return match ($role) {
-        DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_USER => dynabasePermissionKeys(),
-        DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER => defaultPermissionsForRole($role),
-        default => [],
-    };
+    return permissionCeilingForRole($role);
 }
 
 function permissionsActorMayGrant(mysqli $conn, array $actor, string $targetRole): array
 {
-    if (userRole($actor) === DYNABASE_ROLE_SUPER_ADMIN) {
-        return permissionsAssignableToRole($targetRole);
-    }
-
-    $actorPermissions = userEffectivePermissions($conn, $actor);
     $targetRolePermissions = permissionsAssignableToRole($targetRole);
 
-    if (userRole($actor) === DYNABASE_ROLE_PMS_ADMIN) {
-        $targetRolePermissions = permissionsAssignableToRole(DYNABASE_ROLE_PMS_USER);
+    if (userRole($actor) === DYNABASE_ROLE_SUPER_ADMIN) {
+        return $targetRolePermissions;
     }
 
-    return array_values(array_intersect($actorPermissions, $targetRolePermissions));
+    if (userRole($actor) === DYNABASE_ROLE_PMS_ADMIN && $targetRole !== DYNABASE_ROLE_PMS_USER) {
+        return [];
+    }
+
+    return array_values(array_intersect(userEffectivePermissions($conn, $actor), $targetRolePermissions));
 }
 
 function resolveSubmittedPermissions(mysqli $conn, array $actor, string $targetRole, mixed $submittedPermissions): array
 {
     $grantable = permissionsActorMayGrant($conn, $actor, $targetRole);
-    if (!is_array($submittedPermissions)) {
-        return $grantable;
-    }
+    $submitted = is_array($submittedPermissions)
+        ? $submittedPermissions
+        : defaultPermissionsForRole($targetRole);
 
-    return array_values(array_intersect(normalisePermissionKeys($submittedPermissions), $grantable));
+    $selected = array_values(array_intersect(normalisePermissionKeys($submitted), $grantable));
+    $selected = expandPermissionDependencies($selected);
+
+    return array_values(array_intersect($selected, $grantable));
 }
 
-function replaceUserPermissions(mysqli $conn, int $userId, array $permissions, ?int $updatedBy = null): void
-{
+function replaceUserPermissions(
+    mysqli $conn,
+    int $userId,
+    array $permissions,
+    ?int $updatedBy = null,
+    ?string $targetRole = null
+): void {
     if (!permissionTableExists($conn)) {
         return;
     }
+
+    if ($targetRole === null || !in_array($targetRole, DYNABASE_ROLES, true)) {
+        $roleStmt = $conn->prepare('SELECT role FROM users WHERE id = ? LIMIT 1');
+        $roleStmt->bind_param('i', $userId);
+        $roleStmt->execute();
+        $roleRow = $roleStmt->get_result()->fetch_assoc();
+        $roleStmt->close();
+        $targetRole = (string) ($roleRow['role'] ?? '');
+    }
+
+    $permissions = normalisePermissionsForRole($targetRole, $permissions);
 
     $deleteStmt = $conn->prepare('DELETE FROM user_permissions WHERE user_id = ?');
     $deleteStmt->bind_param('i', $userId);
     $deleteStmt->execute();
     $deleteStmt->close();
 
-    $permissions = normalisePermissionKeys($permissions);
     $selected = array_flip($permissions);
     $stmt = $conn->prepare('INSERT INTO user_permissions (user_id, permission_key, granted, updated_by) VALUES (?, ?, ?, ?)');
+
     foreach (dynabasePermissionKeys() as $permission) {
         $granted = isset($selected[$permission]) ? 1 : 0;
         $updatedByParam = $updatedBy;
         $stmt->bind_param('isii', $userId, $permission, $granted, $updatedByParam);
         $stmt->execute();
     }
+
     $stmt->close();
 }
 
 function permissionPayload(mysqli $conn, array $user): array
 {
-    $roleDefaults = [
-        DYNABASE_ROLE_SUPER_ADMIN => dynabasePermissionKeys(),
-        DYNABASE_ROLE_ADMIN => defaultPermissionsForRole(DYNABASE_ROLE_ADMIN),
-        DYNABASE_ROLE_PMS_ADMIN => defaultPermissionsForRole(DYNABASE_ROLE_PMS_ADMIN),
-        DYNABASE_ROLE_PMS_USER => defaultPermissionsForRole(DYNABASE_ROLE_PMS_USER),
-        DYNABASE_ROLE_USER => defaultPermissionsForRole(DYNABASE_ROLE_USER),
-    ];
+    $roleDefaults = [];
+    $roleCeilings = [];
+
+    foreach (DYNABASE_ROLES as $role) {
+        $roleDefaults[$role] = defaultPermissionsForRole($role);
+        $roleCeilings[$role] = permissionCeilingForRole($role);
+    }
 
     $grantableByRole = [];
     foreach (DYNABASE_ROLES as $role) {
@@ -306,8 +476,10 @@ function permissionPayload(mysqli $conn, array $user): array
     return [
         'catalog' => dynabasePermissionCatalog(),
         'keys' => dynabasePermissionKeys(),
+        'dependencies' => dynabasePermissionDependencies(),
         'user_permissions' => userEffectivePermissions($conn, $user),
         'role_defaults' => $roleDefaults,
+        'role_ceilings' => $roleCeilings,
         'grantable_by_role' => $grantableByRole,
     ];
 }

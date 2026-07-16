@@ -7,7 +7,6 @@ require_once __DIR__ . '/../../includes/audit.php';
 
 requireMethod('POST');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN], 'Only Super Admins and Admins can replace document revisions.');
 assertDocumentRevisionSchema($conn);
 
 $documentId = (int) ($_POST['document_id'] ?? $_POST['id'] ?? 0);

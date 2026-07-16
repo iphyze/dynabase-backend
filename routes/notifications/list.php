@@ -33,6 +33,10 @@ if (!notificationsTableExists($conn)) {
 $where = ' WHERE n.user_id = ? AND n.deleted_at IS NULL';
 $types = 'i';
 $params = [$userId];
+[$visibilitySql, $visibilityTypes, $visibilityParams] = notificationVisibilitySql($conn, $authUser, 'n');
+$where .= $visibilitySql;
+$types .= $visibilityTypes;
+$params = array_merge($params, $visibilityParams);
 
 if ($status === 'unread') {
     $where .= ' AND n.read_at IS NULL';
@@ -72,27 +76,28 @@ $items = dbFetchAll(
     $listParams
 );
 
+[$summaryVisibilitySql, $summaryVisibilityTypes, $summaryVisibilityParams] = notificationVisibilitySql($conn, $authUser, 'n');
 $summary = dbFetchOne(
     $conn,
     "SELECT COUNT(*) AS total,
-            SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) AS unread,
-            SUM(CASE WHEN read_at IS NOT NULL THEN 1 ELSE 0 END) AS `read`,
-            SUM(CASE WHEN DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) AS today
-     FROM notifications
-     WHERE user_id = ? AND deleted_at IS NULL",
-    'i',
-    [$userId]
+            SUM(CASE WHEN n.read_at IS NULL THEN 1 ELSE 0 END) AS unread,
+            SUM(CASE WHEN n.read_at IS NOT NULL THEN 1 ELSE 0 END) AS `read`,
+            SUM(CASE WHEN DATE(n.created_at) = CURDATE() THEN 1 ELSE 0 END) AS today
+     FROM notifications n
+     WHERE n.user_id = ? AND n.deleted_at IS NULL{$summaryVisibilitySql}",
+    'i' . $summaryVisibilityTypes,
+    array_merge([$userId], $summaryVisibilityParams)
 ) ?? [];
 
 $categories = dbFetchAll(
     $conn,
-    "SELECT category AS value, COUNT(*) AS total
-     FROM notifications
-     WHERE user_id = ? AND deleted_at IS NULL
-     GROUP BY category
-     ORDER BY category ASC",
-    'i',
-    [$userId]
+    "SELECT n.category AS value, COUNT(*) AS total
+     FROM notifications n
+     WHERE n.user_id = ? AND n.deleted_at IS NULL{$summaryVisibilitySql}
+     GROUP BY n.category
+     ORDER BY n.category ASC",
+    'i' . $summaryVisibilityTypes,
+    array_merge([$userId], $summaryVisibilityParams)
 );
 
 jsonResponse([

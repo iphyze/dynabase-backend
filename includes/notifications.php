@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/dbHelpers.php';
 require_once __DIR__ . '/authorization.php';
+require_once __DIR__ . '/permissions.php';
 require_once __DIR__ . '/settings.php';
 
 function notificationsTableExists(mysqli $conn): bool
@@ -58,7 +59,7 @@ function notificationAdminRecipientIds(mysqli $conn): array
 {
     $rows = dbFetchAll(
         $conn,
-        "SELECT id FROM users WHERE status = 'active' AND role IN ('super_admin', 'admin')"
+        "SELECT id FROM users WHERE status = 'active' AND role IN ('super_admin', 'admin', 'user')"
     );
     return array_map(static fn (array $row): int => (int) $row['id'], $rows);
 }
@@ -82,6 +83,119 @@ function notificationScopedRecipientIds(mysqli $conn, ?int $ownerPmsAdminId): ar
     }
 
     return array_values(array_unique(array_filter($ids, static fn (int $id): bool => $id > 0)));
+}
+
+function notificationRequiredPermission(string $action, ?string $entityType): ?string
+{
+    if (str_starts_with($action, 'document.share_')) {
+        return 'documents.share';
+    }
+
+    return match ($entityType) {
+        'project' => 'tenders.view',
+        'client' => 'clients.view',
+        'keyperson' => 'keypersons.view',
+        'gift_list' => 'gift_lists.view',
+        'document' => 'documents.view',
+        'prequalification' => 'prequalifications.view',
+        'submission_register', 'submission_register_report' => 'submission_register.view',
+        'influence_log' => 'influence_logs.view',
+        'web_of_influence' => 'web_of_influence.view',
+        'client_survey', 'client_survey_invitation' => 'client_surveys.view',
+        'user', 'user_invitation' => 'users.view',
+        'workspace_settings' => 'settings.view',
+        default => null,
+    };
+}
+
+function notificationFilterRecipientsByAccess(
+    mysqli $conn,
+    array $userIds,
+    ?string $requiredPermission,
+    ?int $ownerPmsAdminId,
+    ?string $entityType,
+    mixed $entityId
+): array {
+    $userIds = array_values(array_unique(array_filter(array_map('intval', $userIds), static fn (int $id): bool => $id > 0)));
+    if ($userIds === []) {
+        return [];
+    }
+
+    $placeholders = implode(',', array_fill(0, count($userIds), '?'));
+    $rows = dbFetchAll(
+        $conn,
+        "SELECT id, first_name, last_name, email, role, is_pms_admin, status, parent_pms_admin_id
+         FROM users
+         WHERE id IN ({$placeholders}) AND status = 'active'",
+        str_repeat('i', count($userIds)),
+        $userIds
+    );
+
+    $allowed = [];
+    foreach ($rows as $recipient) {
+        $recipientId = (int) ($recipient['id'] ?? 0);
+
+        if ($requiredPermission !== null && !userHasPermission($conn, $recipient, $requiredPermission)) {
+            continue;
+        }
+
+        if (isPmsWorkspaceUser($recipient)) {
+            $recipientOwnerId = resolveOwnerPmsAdminId($recipient);
+            if ($ownerPmsAdminId === null || $recipientOwnerId === null || $recipientOwnerId !== $ownerPmsAdminId) {
+                continue;
+            }
+        }
+
+        $allowed[] = $recipientId;
+    }
+
+    return array_values(array_unique($allowed));
+}
+
+function notificationVisibilitySql(mysqli $conn, array $authUser, string $alias = 'n'): array
+{
+    $allowedTypes = [];
+    $permissionTypes = [
+        'clients.view' => ['client'],
+        'keypersons.view' => ['keyperson'],
+        'gift_lists.view' => ['gift_list'],
+        'tenders.view' => ['project'],
+        'documents.view' => ['document'],
+        'prequalifications.view' => ['prequalification'],
+        'submission_register.view' => ['submission_register', 'submission_register_report'],
+        'influence_logs.view' => ['influence_log'],
+        'web_of_influence.view' => ['web_of_influence'],
+        'client_surveys.view' => ['client_survey', 'client_survey_invitation'],
+        'users.view' => ['user', 'user_invitation'],
+        'settings.view' => ['workspace_settings'],
+    ];
+
+    foreach ($permissionTypes as $permission => $types) {
+        if (userHasPermission($conn, $authUser, $permission)) {
+            array_push($allowedTypes, ...$types);
+        }
+    }
+
+    $clauses = ["{$alias}.entity_type IS NULL OR {$alias}.entity_type = ''"];
+    $types = '';
+    $params = [];
+
+    if ($allowedTypes !== []) {
+        $allowedTypes = array_values(array_unique($allowedTypes));
+        $clauses[] = "{$alias}.entity_type IN (" . implode(',', array_fill(0, count($allowedTypes), '?')) . ')';
+        $types .= str_repeat('s', count($allowedTypes));
+        array_push($params, ...$allowedTypes);
+    }
+
+    $sql = ' AND (' . implode(' OR ', $clauses) . ')';
+    if (userHasPermission($conn, $authUser, 'documents.view')
+        && !userHasPermission($conn, $authUser, 'documents.share')) {
+        $sql .= " AND NOT ({$alias}.entity_type = 'document' AND COALESCE({$alias}.metadata, '') LIKE ?)";
+        $types .= 's';
+        $params[] = '%document.share\_%';
+    }
+
+    return [$sql, $types, $params];
 }
 
 function createNotificationsForUsers(
@@ -189,7 +303,7 @@ function notificationEntityContext(mysqli $conn, ?string $entityType, mixed $ent
         'influence_log' => ['table' => 'log_table', 'name' => 'key_person', 'owner' => 'owner_pms_admin_id', 'path' => '/influence-logs'],
         'web_of_influence' => ['table' => 'web_of_influence_table', 'name' => 'stakeholder_name', 'owner' => 'owner_pms_admin_id', 'path' => '/web-of-influence/'],
         'client_survey' => ['table' => 'clients_survey_form', 'name' => 'company', 'owner' => 'owner_pms_admin_id', 'path' => '/client-surveys/'],
-        'user' => ['table' => 'users', 'name' => "TRIM(CONCAT(first_name, ' ', last_name))", 'owner' => null, 'path' => '/users'],
+        'user' => ['table' => 'users', 'name' => "TRIM(CONCAT(first_name, ' ', last_name))", 'owner' => 'parent_pms_admin_id', 'path' => '/users'],
     ];
 
     $definition = $definitions[$entityType ?? ''] ?? null;
@@ -320,14 +434,21 @@ function dispatchNotificationForAudit(
         $message = $actorName . ' ' . $definition['verb'] . ' ' . $recordName . '.';
     }
 
-    $isScopedEntity = in_array($entityType, ['client', 'keyperson', 'gift_list', 'influence_log', 'submission_register'], true);
+    $isScopedEntity = in_array($entityType, ['client', 'keyperson', 'gift_list', 'influence_log', 'submission_register', 'user'], true);
     $recipients = $isScopedEntity
         ? notificationScopedRecipientIds($conn, $context['owner_pms_admin_id'] ?? null)
         : notificationAdminRecipientIds($conn);
 
-    if ($entityType === 'user' && is_numeric($entityId)) {
-        $recipients[] = (int) $entityId;
-    }
+    $recipients = notificationFilterRecipientsByAccess(
+        $conn,
+        $recipients,
+        notificationRequiredPermission($action, $entityType),
+        isset($context['owner_pms_admin_id']) && (int) $context['owner_pms_admin_id'] > 0
+            ? (int) $context['owner_pms_admin_id']
+            : null,
+        $entityType,
+        $entityId
+    );
 
     createNotificationsForUsers(
         $conn,

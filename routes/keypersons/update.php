@@ -52,13 +52,9 @@ if ($duplicate) {
 $actorEmail = actorEmail($authUser);
 $actorId = (int) $authUser['id'];
 
-dbExecute(
-    $conn,
-    'UPDATE keypersons_table
-     SET clients_name = ?, clients_id = ?, clients_email = ?, clients_address = ?, clients_hq_location = ?, clients_category = ?,
-         key_person = ?, key_persons_tel = ?, key_persons_email = ?, key_persons_address = ?, gift_status = ?, gift_type = ?,
-         title = ?, info = ?, updated_by = ?, updated_by_id = ?, owner_pms_admin_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?',
+[$recordScopeSql, $recordTypes, $recordParams] = appendScopedWhere(
+    $authUser,
+    '',
     'sisssssssssssssiisi',
     [
         $client['clients_name'],
@@ -81,16 +77,32 @@ dbExecute(
         $status,
         $id,
     ]
+);
+dbExecute(
+    $conn,
+    "UPDATE keypersons_table
+     SET clients_name = ?, clients_id = ?, clients_email = ?, clients_address = ?, clients_hq_location = ?, clients_category = ?,
+         key_person = ?, key_persons_tel = ?, key_persons_email = ?, key_persons_address = ?, gift_status = ?, gift_type = ?,
+         title = ?, info = ?, updated_by = ?, updated_by_id = ?, owner_pms_admin_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?{$recordScopeSql}",
+    $recordTypes,
+    $recordParams
 )->close();
 
 if ((string) $existingKeyperson['key_person'] !== $keyPerson) {
-    dbExecute(
-        $conn,
-        'UPDATE log_table
-         SET key_person = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE clients_id = ? AND key_person = ?',
+    [$logScopeSql, $logTypes, $logParams] = appendScopedWhere(
+        $authUser,
+        '',
         'ssiis',
         [$keyPerson, $actorEmail, $actorId, $clientId, (string) $existingKeyperson['key_person']]
+    );
+    dbExecute(
+        $conn,
+        "UPDATE log_table
+         SET key_person = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE clients_id = ? AND key_person = ?{$logScopeSql}",
+        $logTypes,
+        $logParams
     )->close();
 }
 

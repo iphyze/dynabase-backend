@@ -6,7 +6,6 @@ require_once __DIR__ . '/../../../includes/surveys.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
 
 $q = cleanString($_GET['q'] ?? $_GET['search'] ?? '');
 $rating = cleanString($_GET['rating'] ?? '');

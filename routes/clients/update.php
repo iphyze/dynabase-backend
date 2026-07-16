@@ -60,12 +60,9 @@ $actorId = (int) $authUser['id'];
 
 $conn->begin_transaction();
 try {
-    dbExecute(
-        $conn,
-        'UPDATE clients_table
-         SET clients_name = ?, clients_email = ?, clients_website = ?, clients_address = ?, clients_hq_location = ?,
-             clients_category = ?, updated_by = ?, updated_by_id = ?, owner_pms_admin_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?',
+    [$clientRecordScopeSql, $clientRecordTypes, $clientRecordParams] = appendScopedWhere(
+        $authUser,
+        '',
         'sssssssiisi',
         [
             $clientsName,
@@ -80,15 +77,21 @@ try {
             $status,
             $id,
         ]
-    )->close();
-
-    // Keep legacy denormalised PMS/keyperson/log fields in sync with the client owner and identity.
+    );
     dbExecute(
         $conn,
-        'UPDATE keypersons_table
-         SET clients_name = ?, clients_email = ?, clients_address = ?, clients_hq_location = ?, clients_category = ?,
-             owner_pms_admin_id = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE clients_id = ?',
+        "UPDATE clients_table
+         SET clients_name = ?, clients_email = ?, clients_website = ?, clients_address = ?, clients_hq_location = ?,
+             clients_category = ?, updated_by = ?, updated_by_id = ?, owner_pms_admin_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?{$clientRecordScopeSql}",
+        $clientRecordTypes,
+        $clientRecordParams
+    )->close();
+
+    // Keep legacy denormalised fields in sync without crossing the actor's PMS scope.
+    [$keypersonScopeSql, $keypersonTypes, $keypersonParams] = appendScopedWhere(
+        $authUser,
+        '',
         'sssssisii',
         [
             $clientsName,
@@ -101,16 +104,31 @@ try {
             $actorId,
             $id,
         ]
-    )->close();
-
+    );
     dbExecute(
         $conn,
-        'UPDATE log_table
-         SET clients_name = ?, clients_hq_location = ?, clients_category = ?, owner_pms_admin_id = ?,
-             updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE clients_id = ?',
+        "UPDATE keypersons_table
+         SET clients_name = ?, clients_email = ?, clients_address = ?, clients_hq_location = ?, clients_category = ?,
+             owner_pms_admin_id = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE clients_id = ?{$keypersonScopeSql}",
+        $keypersonTypes,
+        $keypersonParams
+    )->close();
+
+    [$logScopeSql, $logTypes, $logParams] = appendScopedWhere(
+        $authUser,
+        '',
         'sssisii',
         [$clientsName, $clientsHqLocation, $clientsCategory, $ownerPmsAdminId, $actorEmail, $actorId, $id]
+    );
+    dbExecute(
+        $conn,
+        "UPDATE log_table
+         SET clients_name = ?, clients_hq_location = ?, clients_category = ?, owner_pms_admin_id = ?,
+             updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE clients_id = ?{$logScopeSql}",
+        $logTypes,
+        $logParams
     )->close();
 
     $conn->commit();

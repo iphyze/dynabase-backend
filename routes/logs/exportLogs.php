@@ -7,7 +7,6 @@ require_once __DIR__ . '/../../includes/ownership.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN], 'You are not authorised to export influence logs.');
 
 $q = cleanString($_GET['search'] ?? ($_GET['q'] ?? ''));
 $clientId = (int) ($_GET['client_id'] ?? 0);

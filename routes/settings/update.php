@@ -11,7 +11,6 @@ require_once __DIR__ . '/../../includes/audit.php';
 requireMethod('POST');
 
 $actor = authenticateUser();
-requireRole($actor, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
 $data = readJsonBody();
 $section = cleanString($data['section'] ?? '');
 $payload = is_array($data['values'] ?? null) ? $data['values'] : [];

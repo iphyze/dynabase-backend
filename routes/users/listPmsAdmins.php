@@ -8,7 +8,7 @@ require_once __DIR__ . '/../../includes/authorization.php';
 requireMethod('GET');
 
 $actor = authenticateUser();
-requireRole($actor, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN], 'Only permitted users can view PMS Admin options.');
+requireRole($actor, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_PMS_ADMIN], 'Only permitted users can view PMS Admin options.');
 
 if (userRole($actor) === DYNABASE_ROLE_PMS_ADMIN) {
     jsonResponse([

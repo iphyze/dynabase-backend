@@ -34,7 +34,7 @@ if (!$target) {
 
 $target = normalizeUserRow($target);
 if (!canDeactivateUser($actor, $target)) {
-    throw new RuntimeException('You are not allowed to deactivate this user.', 403);
+    throw new RuntimeException('User not found.', 404);
 }
 
 $updateStmt = $conn->prepare('UPDATE users SET status = "deactivated", updated_by = ? WHERE id = ?');

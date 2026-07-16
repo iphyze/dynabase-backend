@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/security.php';
 require_once __DIR__ . '/../../includes/audit.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 requireMethod('POST');
 
@@ -29,6 +30,12 @@ if (count($userIds) === 0) {
 
 if (!in_array($action, ['activate', 'deactivate', 'update_role'], true)) {
     throw new RuntimeException('Please choose a valid bulk action.', 422);
+}
+
+if (in_array($action, ['activate', 'deactivate'], true)) {
+    requirePermission($conn, $actor, 'users.status', 'You do not have permission to change user account status.');
+} else {
+    requirePermission($conn, $actor, 'users.edit', 'You do not have permission to change user roles.');
 }
 
 if ($action === 'update_role' && !in_array($newRole, DYNABASE_ROLES, true)) {
@@ -115,11 +122,16 @@ try {
                 }
             }
 
+            $existingPermissions = userEffectivePermissions($conn, $target);
+            $resolvedPermissions = resolveSubmittedPermissions($conn, $actor, $newRole, $existingPermissions);
+
             $stmt = $conn->prepare('UPDATE users SET role = ?, is_pms_admin = ?, parent_pms_admin_id = ?, updated_by = ? WHERE id = ?');
             $bulkPmsCapability = $newRole === DYNABASE_ROLE_PMS_ADMIN ? 1 : 0;
             $stmt->bind_param('siiii', $newRole, $bulkPmsCapability, $resolvedParentPmsAdminId, $actorId, $userId);
             $stmt->execute();
             $stmt->close();
+
+            replaceUserPermissions($conn, $userId, $resolvedPermissions, $actorId, $newRole);
             writeAuditLog($conn, $actor, 'users.bulk_update_role', 'user', $userId, [
                 'target_email' => $target['email'],
                 'previous_role' => $target['role'],

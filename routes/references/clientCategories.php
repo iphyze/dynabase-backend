@@ -26,7 +26,7 @@ if ($method === 'GET') {
 
     $categories = dbFetchAll(
         $conn,
-        "SELECT id, category_name, created_by, created_at, updated_by, updated_at
+        "SELECT id, category_name
          FROM clients_category_table{$where}
          ORDER BY category_name ASC",
         $types,

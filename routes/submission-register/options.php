@@ -6,7 +6,6 @@ require_once __DIR__ . '/../../includes/submissionRegister.php';
 
 requireMethod('GET');
 authenticateUser();
-ensureSubmissionRegisterSchema($conn);
 
 jsonResponse([
     'status' => 'Success',

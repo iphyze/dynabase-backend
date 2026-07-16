@@ -120,7 +120,7 @@ if ($giftOwnerId !== null) {
     $giftWhere = ' AND gl.owner_pms_admin_id = ?';
     $giftTypes .= 'i';
     $giftParams[] = $giftOwnerId;
-} elseif (!userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
+} elseif (!isGlobalDataUser($authUser)) {
     $giftWhere = ' AND 1 = 0';
 }
 $giftTypes .= 'i';
@@ -281,6 +281,19 @@ if ($canSearch('client_surveys.view')) {
 }
 
 if ($canSearch('users.view')) {
+    $userScopeSql = '';
+    $userTypes = 'ssss';
+    $userParams = [$like, $like, $like, $like];
+    if (userRole($authUser) === DYNABASE_ROLE_PMS_ADMIN) {
+        $userScopeSql = " AND u.parent_pms_admin_id = ? AND u.role = 'pms_user'";
+        $userTypes .= 'i';
+        $userParams[] = (int) $authUser['id'];
+    } elseif (userRole($authUser) !== DYNABASE_ROLE_SUPER_ADMIN) {
+        $userScopeSql = ' AND 1 = 0';
+    }
+    $userTypes .= 'i';
+    $userParams[] = $limit;
+
     $userRows = dbFetchAll(
         $conn,
         "SELECT u.id,
@@ -289,10 +302,11 @@ if ($canSearch('users.view')) {
                 CONCAT(REPLACE(u.role, '_', ' '), ' • ', u.status) AS meta
          FROM users u
          WHERE (u.first_name LIKE ? OR u.last_name LIKE ? OR u.email LIKE ? OR u.role LIKE ?)
+           {$userScopeSql}
          ORDER BY u.updated_at DESC, u.id DESC
          LIMIT ?",
-        'ssssi',
-        [$like, $like, $like, $like, $limit]
+        $userTypes,
+        $userParams
     );
     $pushGroup('users', 'Users & Access', array_map(static fn (array $row): array => $row + ['path' => '/users?search=' . rawurlencode($query)], $userRows));
 }

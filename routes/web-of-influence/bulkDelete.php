@@ -7,7 +7,6 @@ require_once __DIR__ . '/../../includes/audit.php';
 
 requireMethod('POST');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
 $payload = readJsonBody();
 $ids = array_values(array_unique(array_filter(array_map('intval', is_array($payload['ids'] ?? null) ? $payload['ids'] : []), static fn (int $id): bool => $id > 0)));
 

@@ -16,13 +16,19 @@ $keyperson = assertKeypersonAccessible($conn, $authUser, $id, true);
 $actorEmail = actorEmail($authUser);
 $actorId = (int) $authUser['id'];
 
+[$recordScopeSql, $recordTypes, $recordParams] = appendScopedWhere(
+    $authUser,
+    '',
+    'sii',
+    [$actorEmail, $actorId, $id]
+);
 dbExecute(
     $conn,
     "UPDATE keypersons_table
      SET status = 'active', updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?",
-    'sii',
-    [$actorEmail, $actorId, $id]
+     WHERE id = ?{$recordScopeSql}",
+    $recordTypes,
+    $recordParams
 )->close();
 
 writeAuditLog($conn, $authUser, 'keyperson.activated', 'keyperson', $id, [

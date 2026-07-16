@@ -7,7 +7,6 @@ require_once __DIR__ . '/../../includes/emailTemplates.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
 
 $key = cleanString($_GET['key'] ?? '');
 if ($key === '') {

@@ -10,7 +10,7 @@ requireMethod('GET');
 $actor = authenticateUser();
 requireRole(
     $actor,
-    [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN],
+    [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_PMS_ADMIN],
     'Only permitted users can download users.'
 );
 
@@ -31,10 +31,6 @@ $sortSql = $allowedSorts[$sort] ?? $allowedSorts['created_at'];
 $where = 'WHERE 1 = 1';
 $params = [];
 $types = '';
-
-if (userRole($actor) === DYNABASE_ROLE_ADMIN) {
-    $where .= ' AND u.role IN ("admin", "pms_admin", "pms_user", "user")';
-}
 
 if (userRole($actor) === DYNABASE_ROLE_PMS_ADMIN) {
     $where .= ' AND u.parent_pms_admin_id = ? AND u.role = "pms_user"';

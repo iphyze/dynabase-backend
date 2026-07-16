@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/ownership.php';
 require_once __DIR__ . '/../../includes/giftLists.php';
 require_once __DIR__ . '/../../includes/audit.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 requireMethod('POST');
 $authUser = authenticateUser();
@@ -26,6 +27,12 @@ if (!in_array($action, ['activate', 'deactivate', 'gift_yes', 'gift_no'], true))
     throw new RuntimeException('Please select a valid bulk action.', 422);
 }
 
+if (in_array($action, ['gift_yes', 'gift_no'], true)) {
+    requirePermission($conn, $authUser, 'gift_lists.edit', 'You do not have permission to change annual gift-list decisions.');
+} else {
+    requirePermission($conn, $authUser, 'keypersons.edit', 'You do not have permission to change key-person status.');
+}
+
 $placeholders = implode(',', array_fill(0, count($ids), '?'));
 $types = str_repeat('i', count($ids));
 $params = $ids;
@@ -43,7 +50,7 @@ $accessibleRows = dbFetchAll(
 );
 
 if (count($accessibleRows) !== count($ids)) {
-    throw new RuntimeException('One or more selected key persons are not accessible.', 403);
+    throw new RuntimeException('One or more selected key persons were not found.', 404);
 }
 
 $actorEmail = actorEmail($authUser);

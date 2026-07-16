@@ -420,7 +420,6 @@ function assertDocumentTitleAvailable(mysqli $conn, string $title, string $type,
 
 function assertDocumentAccessible(mysqli $conn, array $authUser, int $documentId, bool $includeDeleted = false): array
 {
-    requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN], 'Only Super Admins and Admins can access Documents.');
     $statusSql = $includeDeleted ? '' : " AND d.status = 'active'";
     $document = dbFetchOne(
         $conn,

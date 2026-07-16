@@ -50,7 +50,7 @@ try {
     }
 
     if (!canResendUserInvitation($actor, $target)) {
-        throw new RuntimeException('You are not allowed to resend this user invitation.', 403);
+        throw new RuntimeException('User not found.', 404);
     }
 
     $email = cleanEmail($target['email'] ?? '');

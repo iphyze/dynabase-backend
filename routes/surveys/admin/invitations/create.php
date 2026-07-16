@@ -10,7 +10,6 @@ require_once __DIR__ . '/../../../../includes/projects.php';
 
 requireMethod('POST');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
 $payload = readJsonBody();
 
 $requestedClientId = (int) ($payload['client_id'] ?? 0);

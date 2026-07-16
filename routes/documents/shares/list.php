@@ -6,7 +6,6 @@ require_once __DIR__ . '/../../../includes/documentShares.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN], 'Only Super Admins and Admins can manage document links.');
 assertDocumentRevisionSchema($conn);
 assertDocumentShareSchema($conn);
 cleanupDocumentShareSecurityArtifacts($conn, true);

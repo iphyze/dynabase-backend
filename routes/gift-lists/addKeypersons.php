@@ -58,7 +58,7 @@ $keypersons = dbFetchAll(
 );
 
 if (count($keypersons) !== count($keypersonIds)) {
-    throw new RuntimeException('One or more selected key persons are inactive, unavailable, or outside your PMS ownership scope.', 422);
+    throw new RuntimeException('One or more selected key persons were not found or are unavailable.', 404);
 }
 
 $missingOwnerNames = [];
@@ -88,7 +88,7 @@ try {
     foreach ($grouped as $ownerId => $ownerKeypersons) {
         $resolvedOwnerId = resolveGiftOwnerPmsAdminId($conn, $authUser, (int) $ownerId);
         if ($resolvedOwnerId !== (int) $ownerId) {
-            throw new RuntimeException('One or more selected key persons are outside your PMS ownership scope.', 403);
+            throw new RuntimeException('One or more selected key persons were not found.', 404);
         }
 
         $giftList = dbFetchOne(

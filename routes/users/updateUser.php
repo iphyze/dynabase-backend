@@ -54,7 +54,7 @@ if (!$target) {
 
 $target = normalizeUserRow($target);
 if (!canUpdateUserProfile($actor, $target)) {
-    throw new RuntimeException('You are not allowed to update this user.', 403);
+    throw new RuntimeException('User not found.', 404);
 }
 
 $nextRole = $role ?: (string) $target['role'];
@@ -80,8 +80,11 @@ if (!in_array($nextStatus, ['pending', 'active', 'inactive', 'deactivated'], tru
     throw new RuntimeException('Please choose a valid status.', 422);
 }
 
-if ($nextStatus !== (string) $target['status'] && !canManageUserStatus($actor, $target)) {
-    throw new RuntimeException('You are not allowed to update this user status.', 403);
+if ($nextStatus !== (string) $target['status']) {
+    requirePermission($conn, $actor, 'users.status', 'You do not have permission to change user account status.');
+    if (!canManageUserStatus($actor, $target)) {
+        throw new RuntimeException('User not found.', 404);
+    }
 }
 
 $resolvedParentPmsAdminId = null;
@@ -106,7 +109,10 @@ if ($nextRole === DYNABASE_ROLE_PMS_USER) {
     }
 }
 
-$resolvedPermissionKeys = resolveSubmittedPermissions($conn, $actor, $nextRole, $submittedPermissionKeys);
+$permissionInput = is_array($submittedPermissionKeys)
+    ? $submittedPermissionKeys
+    : userEffectivePermissions($conn, $target);
+$resolvedPermissionKeys = resolveSubmittedPermissions($conn, $actor, $nextRole, $permissionInput);
 
 $actorId = (int) $actor['id'];
 $updateStmt = $conn->prepare(
@@ -118,7 +124,7 @@ $updateStmt->bind_param('sssisiii', $firstName, $lastName, $nextRole, $nextIsPms
 $updateStmt->execute();
 $updateStmt->close();
 
-replaceUserPermissions($conn, $userId, $resolvedPermissionKeys, $actorId);
+replaceUserPermissions($conn, $userId, $resolvedPermissionKeys, $actorId, $nextRole);
 
 writeAuditLog($conn, $actor, 'users.update', 'user', $userId, [
     'target_email' => $target['email'],

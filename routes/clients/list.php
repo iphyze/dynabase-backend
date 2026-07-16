@@ -6,9 +6,23 @@ require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/ownership.php';
 require_once __DIR__ . '/../../includes/pagination.php';
 require_once __DIR__ . '/../../includes/dbHelpers.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
+
+$canViewKeypersons = userHasPermission($conn, $authUser, 'keypersons.view');
+$canViewInfluenceLogs = userHasPermission($conn, $authUser, 'influence_logs.view');
+$canViewTenders = userHasPermission($conn, $authUser, 'tenders.view');
+$keypersonCountSql = $canViewKeypersons
+    ? "(SELECT COUNT(*) FROM keypersons_table kp WHERE kp.clients_id = c.id AND kp.owner_pms_admin_id <=> c.owner_pms_admin_id AND kp.status <> 'deactivated')"
+    : '0';
+$logCountSql = $canViewInfluenceLogs
+    ? "(SELECT COUNT(*) FROM log_table lg WHERE lg.clients_id = c.id AND lg.owner_pms_admin_id <=> c.owner_pms_admin_id)"
+    : '0';
+$projectCountSql = $canViewTenders
+    ? "(SELECT COUNT(*) FROM project_info_table pr WHERE pr.project_client = c.clients_name AND pr.record_status <> 'deleted')"
+    : '0';
 
 $q = cleanString($_GET['q'] ?? $_GET['search'] ?? '');
 $category = cleanString($_GET['category'] ?? '');
@@ -81,29 +95,12 @@ $rows = dbFetchAll(
             owner.email AS owner_pms_admin_email,
             TRIM(CONCAT(COALESCE(creator.first_name, ''), ' ', COALESCE(creator.last_name, ''))) AS created_by_name,
             creator.email AS created_by_email,
-            COALESCE(k.keyperson_count, 0) AS keyperson_count,
-            COALESCE(l.log_count, 0) AS log_count,
-            COALESCE(p.project_count, 0) AS project_count
+            {$keypersonCountSql} AS keyperson_count,
+            {$logCountSql} AS log_count,
+            {$projectCountSql} AS project_count
      FROM clients_table c
      LEFT JOIN users owner ON owner.id = c.owner_pms_admin_id
      LEFT JOIN users creator ON creator.id = c.created_by_id
-     LEFT JOIN (
-        SELECT clients_id, COUNT(*) AS keyperson_count
-        FROM keypersons_table
-        WHERE status <> 'deactivated'
-        GROUP BY clients_id
-     ) k ON k.clients_id = c.id
-     LEFT JOIN (
-        SELECT clients_id, COUNT(*) AS log_count
-        FROM log_table
-        GROUP BY clients_id
-     ) l ON l.clients_id = c.id
-     LEFT JOIN (
-        SELECT project_client, COUNT(*) AS project_count
-        FROM project_info_table
-        WHERE record_status <> 'deleted'
-        GROUP BY project_client
-     ) p ON p.project_client = c.clients_name
      {$where}
      ORDER BY {$sortSql} {$order}, c.id DESC
      LIMIT ? OFFSET ?",

@@ -36,7 +36,7 @@ if (!$row) {
 
 $row = normalizeUserRow($row);
 if (!canUpdateUserProfile($actor, $row)) {
-    throw new RuntimeException('You are not allowed to update this user.', 403);
+    throw new RuntimeException('User not found.', 404);
 }
 
 $parentName = trim((string) ($row['parent_first_name'] ?? '') . ' ' . (string) ($row['parent_last_name'] ?? ''));

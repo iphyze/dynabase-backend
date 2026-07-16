@@ -7,7 +7,6 @@ require_once __DIR__ . '/../../includes/mailer.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-requireRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
 
 $catalog = array_values(dynabaseEmailTemplateCatalog());
 $categoryCounts = [];

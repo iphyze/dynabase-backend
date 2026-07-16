@@ -7,11 +7,6 @@ require_once __DIR__ . '/../../includes/reports.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
-requireRole(
-    $authUser,
-    [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN],
-    'Reports are only available to Super Admins and Admins.'
-);
 
 $giftYear = dynabaseReportYearFilter($_GET['year'] ?? 'all');
 
