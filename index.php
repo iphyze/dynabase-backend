@@ -31,6 +31,7 @@ $routes = [
     '/users/update' => 'routes/users/updateUser.php',
     '/users/bulk-update' => 'routes/users/bulkUpdateUsers.php',
     '/users/reset-password' => 'routes/users/resetPassword.php',
+    '/users/resend-invitation' => 'routes/users/resendInvitation.php',
     '/users/export' => 'routes/users/exportUsers.php',
     '/users/permissions' => 'routes/users/permissions.php',
 
@@ -200,6 +201,7 @@ function routePermissionForPath(string $path): string|array|null
         '/users/activate' => 'users.status',
         '/users/deactivate' => 'users.status',
         '/users/reset-password' => 'users.reset',
+        '/users/resend-invitation' => 'users.invite',
         '/users/export' => 'users.export',
         '/users/permissions' => ['users.view', 'users.edit'],
 

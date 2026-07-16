@@ -148,6 +148,28 @@ function canResetUserPassword(array $actor, array $target): bool
     return canManageUserStatus($actor, $target);
 }
 
+function canResendUserInvitation(array $actor, array $target): bool
+{
+    if ((string) ($target['status'] ?? '') !== 'pending') {
+        return false;
+    }
+
+    if ((int) ($actor['id'] ?? 0) === (int) ($target['id'] ?? 0)) {
+        return false;
+    }
+
+    if (!canInviteRole($actor, userRole($target))) {
+        return false;
+    }
+
+    if (userRole($actor) === DYNABASE_ROLE_PMS_ADMIN) {
+        return userRole($target) === DYNABASE_ROLE_PMS_USER
+            && (int) ($target['parent_pms_admin_id'] ?? 0) === (int) $actor['id'];
+    }
+
+    return userHasRole($actor, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
+}
+
 function canUpdateUserProfile(array $actor, array $target): bool
 {
     $actorRole = userRole($actor);

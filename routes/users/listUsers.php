@@ -65,7 +65,12 @@ $countStmt->close();
 
 $sql = "SELECT u.id, u.first_name, u.last_name, u.email, u.role, u.is_pms_admin, u.status, u.parent_pms_admin_id,
                u.invited_by, u.created_by, u.updated_by, u.created_at, u.updated_at, u.last_login_at,
-               p.first_name AS parent_first_name, p.last_name AS parent_last_name, p.email AS parent_email
+               p.first_name AS parent_first_name, p.last_name AS parent_last_name, p.email AS parent_email,
+               (SELECT ui.expires_at
+                  FROM user_invitations ui
+                 WHERE ui.email = u.email AND ui.status = 'pending'
+                 ORDER BY ui.id DESC
+                 LIMIT 1) AS invitation_expires_at
         FROM users u
         LEFT JOIN users p ON p.id = u.parent_pms_admin_id
         {$where}
@@ -94,6 +99,8 @@ while ($row = $result->fetch_assoc()) {
         'can_deactivate' => userHasPermission($conn, $actor, 'users.status') && canDeactivateUser($actor, $row),
         'can_update' => userHasPermission($conn, $actor, 'users.edit') && canUpdateUserProfile($actor, $row),
         'can_reset_password' => userHasPermission($conn, $actor, 'users.reset') && canResetUserPassword($actor, $row),
+        'can_resend_invitation' => userHasPermission($conn, $actor, 'users.invite') && canResendUserInvitation($actor, $row),
+        'invitation_expires_at' => $row['invitation_expires_at'] ?? null,
         'allowed_roles' => userHasPermission($conn, $actor, 'users.edit') ? allowedManagedRoles($actor) : [],
         'permissions' => userEffectivePermissions($conn, $row),
     ];
