@@ -29,6 +29,8 @@ function documentAllowedExtensions(): array
         'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
         'ppt' => ['application/vnd.ms-powerpoint', 'application/x-ole-storage', 'application/cdfv2', 'application/octet-stream'],
         'pptx' => ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/zip', 'application/x-zip-compressed', 'application/octet-stream'],
+        'zip' => ['application/zip', 'application/x-zip', 'application/x-zip-compressed', 'multipart/x-zip', 'application/octet-stream'],
+        'rar' => ['application/vnd.rar', 'application/rar', 'application/x-rar', 'application/x-rar-compressed', 'application/octet-stream'],
     ];
 }
 
@@ -36,6 +38,25 @@ function documentPreviewableExtensions(): array
 {
     // Preserve preview support for legacy files already stored in Dynabase.
     return ['pdf', 'txt', 'csv', 'jpg', 'jpeg', 'png', 'webp'];
+}
+
+function documentArchiveExtensions(): array
+{
+    return ['zip', 'rar'];
+}
+
+function documentFileCapabilities(string $extension): array
+{
+    $extension = strtolower(trim($extension));
+    $previewable = in_array($extension, documentPreviewableExtensions(), true);
+    $isArchive = in_array($extension, documentArchiveExtensions(), true);
+
+    return [
+        'previewable' => $previewable,
+        'download_only' => !$previewable,
+        'file_kind' => $isArchive ? 'archive' : 'document',
+        'delivery_mode' => $previewable ? 'preview' : 'download',
+    ];
 }
 
 function normaliseDocumentType(mixed $value): string
@@ -172,6 +193,58 @@ function documentValidateOoxmlPackage(string $path, string $extension): bool
     return $hasContentTypes && $hasFormatDirectory;
 }
 
+function documentValidateZipArchive(string $path): bool
+{
+    $hasZipSignature = documentFileStartsWith($path, "PK\x03\x04")
+        || documentFileStartsWith($path, "PK\x05\x06");
+    if (!$hasZipSignature) {
+        return false;
+    }
+
+    $fileSize = @filesize($path);
+    if (!is_int($fileSize) || $fileSize < 22) {
+        return false;
+    }
+
+    $handle = @fopen($path, 'rb');
+    if ($handle === false) {
+        return false;
+    }
+    $tailLength = min($fileSize, 65557);
+    if (fseek($handle, -$tailLength, SEEK_END) !== 0) {
+        fclose($handle);
+        return false;
+    }
+    $tail = fread($handle, $tailLength);
+    fclose($handle);
+    if (!is_string($tail) || strrpos($tail, "PK\x05\x06") === false) {
+        return false;
+    }
+
+    if (!class_exists('ZipArchive')) {
+        return true;
+    }
+
+    $zip = new ZipArchive();
+    $opened = $zip->open($path, ZipArchive::CHECKCONS);
+    if ($opened !== true) {
+        return false;
+    }
+    $zip->close();
+    return true;
+}
+
+function documentValidateRarArchive(string $path): bool
+{
+    $fileSize = @filesize($path);
+    if (!is_int($fileSize) || $fileSize < 20) {
+        return false;
+    }
+
+    return documentFileStartsWith($path, "Rar!\x1A\x07\x00")
+        || documentFileStartsWith($path, "Rar!\x1A\x07\x01\x00");
+}
+
 function documentValidateUploadSignature(string $path, string $extension): bool
 {
     if ($extension === 'pdf') {
@@ -182,6 +255,12 @@ function documentValidateUploadSignature(string $path, string $extension): bool
     }
     if (in_array($extension, ['docx', 'xlsx', 'pptx'], true)) {
         return documentValidateOoxmlPackage($path, $extension);
+    }
+    if ($extension === 'zip') {
+        return documentValidateZipArchive($path);
+    }
+    if ($extension === 'rar') {
+        return documentValidateRarArchive($path);
     }
     return false;
 }
@@ -211,7 +290,7 @@ function storeDocumentUpload(array $file): array
     $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
     $allowed = documentAllowedExtensions();
     if ($extension === '' || !array_key_exists($extension, $allowed)) {
-        throw new RuntimeException('Unsupported file type. Upload a PDF, Word, PowerPoint or Excel document.', 422);
+        throw new RuntimeException('Unsupported file type. Upload a PDF, Word, PowerPoint, Excel, ZIP or RAR file.', 422);
     }
 
     $tmpName = (string) ($file['tmp_name'] ?? '');
@@ -474,6 +553,7 @@ function documentLinkedLabel(array $row): ?string
 function documentResponsePayload(array $row): array
 {
     $extension = strtolower((string) ($row['file_extension'] ?? pathinfo((string) ($row['document'] ?? ''), PATHINFO_EXTENSION)));
+    $capabilities = documentFileCapabilities($extension);
     $absolutePath = resolveDocumentAbsolutePath($row);
     $originalName = trim((string) ($row['original_name'] ?? ''));
     if ($originalName === '') {
@@ -504,7 +584,10 @@ function documentResponsePayload(array $row): array
         'revision_count' => max(0, (int) ($row['revision_count'] ?? 0)),
         'current_revision_id' => isset($row['current_revision_id']) && $row['current_revision_id'] !== null ? (int) $row['current_revision_id'] : null,
         'current_revision_code' => trim((string) ($row['current_revision_code'] ?? '')) ?: null,
-        'previewable' => in_array($extension, documentPreviewableExtensions(), true),
+        'previewable' => $capabilities['previewable'],
+        'download_only' => $capabilities['download_only'],
+        'file_kind' => $capabilities['file_kind'],
+        'delivery_mode' => $capabilities['delivery_mode'],
         'file_available' => $absolutePath !== null,
         'is_legacy' => str_starts_with((string) ($row['storage_path'] ?? ''), 'legacy/'),
         'status' => $row['status'] ?? 'active',
@@ -730,6 +813,8 @@ function syncDocumentCurrentRevision(mysqli $conn, int $documentId, int $revisio
         throw new RuntimeException('The selected revision file is unavailable and cannot be made current.', 409);
     }
 
+    assertDocumentCurrentRevisionShareDelivery($conn, $documentId, (string) ($revision['file_extension'] ?? ''));
+
     dbExecute(
         $conn,
         'UPDATE document_table
@@ -753,6 +838,53 @@ function syncDocumentCurrentRevision(mysqli $conn, int $documentId, int $revisio
             $documentId,
         ]
     )->close();
+}
+
+function documentShareDeliveryPolicyAvailable(mysqli $conn): bool
+{
+    $requiredColumns = ['document_id', 'revision_id', 'allow_download', 'status', 'expires_at'];
+    $placeholders = implode(',', array_fill(0, count($requiredColumns), '?'));
+    $rows = dbFetchAll(
+        $conn,
+        "SELECT COLUMN_NAME AS column_name
+         FROM information_schema.columns
+         WHERE table_schema = DATABASE()
+           AND table_name = 'document_share_links'
+           AND column_name IN ({$placeholders})",
+        str_repeat('s', count($requiredColumns)),
+        $requiredColumns
+    );
+    $available = array_map(static fn (array $row): string => strtolower((string) $row['column_name']), $rows);
+    return count(array_unique($available)) === count($requiredColumns);
+}
+
+function assertDocumentCurrentRevisionShareDelivery(mysqli $conn, int $documentId, string $extension): void
+{
+    if (documentFileCapabilities($extension)['previewable'] || !documentShareDeliveryPolicyAvailable($conn)) {
+        return;
+    }
+
+    $blockedLinks = dbScalarInt(
+        $conn,
+        "SELECT COUNT(*) AS total
+         FROM document_share_links
+         WHERE document_id = ?
+           AND revision_id IS NULL
+           AND allow_download = 0
+           AND status = 'active'
+           AND expires_at > NOW()",
+        'i',
+        [$documentId]
+    );
+    if ($blockedLinks <= 0) {
+        return;
+    }
+
+    $label = $blockedLinks === 1 ? 'link has' : 'links have';
+    throw new RuntimeException(
+        "This file type cannot be previewed online, and {$blockedLinks} active current-revision share {$label} downloads disabled. Enable downloads on those links before making this revision current.",
+        409
+    );
 }
 
 function fetchDocumentRevision(mysqli $conn, int $revisionId, bool $includeReplaced = true): ?array
@@ -806,6 +938,7 @@ function assertDocumentRevisionAccessible(
 function documentRevisionResponsePayload(array $row): array
 {
     $extension = strtolower((string) ($row['file_extension'] ?? ''));
+    $capabilities = documentFileCapabilities($extension);
     $absolutePath = resolveDocumentAbsolutePath($row);
     return [
         'id' => (int) $row['id'],
@@ -820,7 +953,10 @@ function documentRevisionResponsePayload(array $row): array
         'file_size' => (int) $row['file_size'],
         'checksum_sha256' => $row['checksum_sha256'],
         'preview_file_path' => $row['preview_file_path'] ?? null,
-        'previewable' => in_array($extension, documentPreviewableExtensions(), true),
+        'previewable' => $capabilities['previewable'],
+        'download_only' => $capabilities['download_only'],
+        'file_kind' => $capabilities['file_kind'],
+        'delivery_mode' => $capabilities['delivery_mode'],
         'file_available' => $absolutePath !== null,
         'is_current' => (bool) $row['is_current'],
         'record_status' => $row['record_status'],

@@ -41,6 +41,9 @@ if ($absolutePath === null) {
 }
 
 $previewable = (bool) $filePayload['previewable'];
+if ($mode === 'preview' && !$previewable) {
+    throw new RuntimeException('This file type cannot be previewed online. Download the file to access it.', 422);
+}
 $disposition = $mode === 'preview' && $previewable ? 'inline' : 'attachment';
 $filename = cleanDocumentOriginalName((string) $filePayload['original_name']);
 $mimeType = $disposition === 'inline' ? (string) $filePayload['mime_type'] : 'application/octet-stream';

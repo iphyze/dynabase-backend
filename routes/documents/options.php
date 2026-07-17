@@ -88,6 +88,11 @@ jsonResponse([
         ], $keypersons),
         'allowed_extensions' => array_keys(documentAllowedExtensions()),
         'previewable_extensions' => documentPreviewableExtensions(),
+        'archive_extensions' => documentArchiveExtensions(),
+        'extension_capabilities' => array_map(
+            static fn (string $extension): array => ['extension' => $extension] + documentFileCapabilities($extension),
+            array_keys(documentAllowedExtensions())
+        ),
         'max_upload_bytes' => documentMaxUploadBytes(),
         'revision_code_example' => 'Rev101',
         'revision_code_max_length' => 50,

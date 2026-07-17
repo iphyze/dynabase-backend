@@ -26,6 +26,12 @@ $linkName = normaliseDocumentShareLinkName($payload['link_name'] ?? $share['link
 $allowDownload = array_key_exists('allow_download', $payload)
     ? documentFormBoolean($payload['allow_download'], false)
     : (bool) $share['allow_download'];
+assertDocumentShareDeliveryOptions(
+    $conn,
+    (int) $share['document_id'],
+    resolveDocumentShareTargetRevision($conn, $share),
+    $allowDownload
+);
 $expiresAt = array_key_exists('expires_at', $payload)
     ? normaliseDocumentShareExpiry($payload['expires_at'])
     : (string) $share['expires_at'];

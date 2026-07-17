@@ -328,6 +328,29 @@ function assertDocumentShareTargetRevision(
     return assertDocumentRevisionAccessible($conn, $authUser, $documentId, $revisionId, true);
 }
 
+function assertDocumentShareDeliveryOptions(
+    mysqli $conn,
+    int $documentId,
+    ?array $targetRevision,
+    bool $allowDownload
+): array {
+    $revision = $targetRevision ?? resolveDocumentShareTargetRevision($conn, [
+        'document_id' => $documentId,
+        'revision_id' => null,
+    ]);
+    $extension = strtolower((string) ($revision['file_extension'] ?? ''));
+    $capabilities = documentFileCapabilities($extension);
+
+    if ($capabilities['download_only'] && !$allowDownload) {
+        throw new RuntimeException(
+            'This file type cannot be previewed online. Download access must remain enabled for this share link.',
+            422
+        );
+    }
+
+    return $revision;
+}
+
 function fetchDocumentShareById(mysqli $conn, int $shareId): ?array
 {
     return dbFetchOne(
@@ -420,6 +443,8 @@ function documentShareAdminPayload(mysqli $conn, array $share): array
     }
 
     $rawToken = documentShareDecryptToken($share['token_ciphertext'] ?? null);
+    $targetExtension = strtolower((string) ($targetRevision['file_extension'] ?? ''));
+    $targetCapabilities = documentFileCapabilities($targetExtension);
 
     return [
         'id' => (int) $share['id'],
@@ -428,6 +453,11 @@ function documentShareAdminPayload(mysqli $conn, array $share): array
         'targets_current_revision' => $share['revision_id'] === null,
         'target_revision_code' => $targetRevision['revision_code'] ?? $share['fixed_revision_code'] ?? null,
         'target_original_name' => $targetRevision['original_name'] ?? $share['fixed_original_name'] ?? null,
+        'target_file_extension' => $targetExtension !== '' ? $targetExtension : null,
+        'target_previewable' => $targetAvailable ? $targetCapabilities['previewable'] : false,
+        'target_download_only' => $targetAvailable ? $targetCapabilities['download_only'] : false,
+        'target_file_kind' => $targetAvailable ? $targetCapabilities['file_kind'] : null,
+        'target_delivery_mode' => $targetAvailable ? $targetCapabilities['delivery_mode'] : null,
         'target_available' => $targetAvailable,
         'link_name' => $share['link_name'] ?? '',
         'access_mode' => $share['access_mode'],
@@ -635,7 +665,7 @@ function touchDocumentShareAccess(mysqli $conn, int $shareId, bool $download = f
 function documentSharePublicPayload(mysqli $conn, array $share, array $revision): array
 {
     $extension = strtolower((string) ($revision['file_extension'] ?? ''));
-    $previewable = in_array($extension, documentPreviewableExtensions(), true);
+    $capabilities = documentFileCapabilities($extension);
 
     return [
         'document' => [
@@ -651,7 +681,10 @@ function documentSharePublicPayload(mysqli $conn, array $share, array $revision)
             'mime_type' => $revision['mime_type'],
             'file_extension' => $extension,
             'file_size' => (int) $revision['file_size'],
-            'previewable' => $previewable,
+            'previewable' => $capabilities['previewable'],
+            'download_only' => $capabilities['download_only'],
+            'file_kind' => $capabilities['file_kind'],
+            'delivery_mode' => $capabilities['delivery_mode'],
             'uploaded_at' => $revision['uploaded_at'],
         ],
         'share' => [

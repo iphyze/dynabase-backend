@@ -24,6 +24,7 @@ $accessMode = normaliseDocumentShareAccessMode($payload['access_mode'] ?? 'open'
 $passwordHash = normaliseDocumentSharePassword($payload['password'] ?? '', $accessMode === 'controlled');
 $linkName = normaliseDocumentShareLinkName($payload['link_name'] ?? '');
 $allowDownload = documentFormBoolean($payload['allow_download'] ?? true, true);
+$deliveryRevision = assertDocumentShareDeliveryOptions($conn, $documentId, $targetRevision, $allowDownload);
 $expiresAt = normaliseDocumentShareExpiry($payload['expires_at'] ?? '');
 $actorId = (int) $authUser['id'];
 $actorEmail = actorEmail($authUser);
@@ -99,7 +100,7 @@ writeAuditLog($conn, $authUser, 'document.share_created', 'document', $documentI
     'share_id' => $shareId,
     'title' => $document['document_title'],
     'revision_id' => $revisionId,
-    'revision_code' => $targetRevision['revision_code'] ?? null,
+    'revision_code' => $deliveryRevision['revision_code'] ?? null,
     'targets_current_revision' => $revisionId === null,
     'access_mode' => $accessMode,
     'allow_download' => $allowDownload,
