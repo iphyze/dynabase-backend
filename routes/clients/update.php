@@ -32,16 +32,16 @@ if (!in_array($status, ['active', 'inactive', 'deactivated'], true)) {
     throw new RuntimeException('Invalid client status.', 422);
 }
 
-$ownerPmsAdminId = isset($existingClient['owner_pms_admin_id']) && $existingClient['owner_pms_admin_id'] !== null
-    ? (int) $existingClient['owner_pms_admin_id']
-    : null;
-
-if (isGlobalDataUser($authUser) && array_key_exists('owner_pms_admin_id', $payload)) {
-    $requestedOwner = $payload['owner_pms_admin_id'] === '' || $payload['owner_pms_admin_id'] === null
-        ? null
-        : (int) $payload['owner_pms_admin_id'];
-    $ownerPmsAdminId = resolveAssignableOwnerPmsAdminId($conn, $authUser, $requestedOwner);
-}
+$requestedOwner = array_key_exists('owner_pms_admin_id', $payload)
+    && $payload['owner_pms_admin_id'] !== ''
+    && $payload['owner_pms_admin_id'] !== null
+        ? (int) $payload['owner_pms_admin_id']
+        : (
+            isset($existingClient['owner_pms_admin_id']) && $existingClient['owner_pms_admin_id'] !== null
+                ? (int) $existingClient['owner_pms_admin_id']
+                : null
+        );
+$ownerPmsAdminId = resolveClientOwnerPmsAdminId($conn, $authUser, $requestedOwner);
 
 [$dupOwnerSql, $dupOwnerTypes, $dupOwnerParams] = ownerDuplicateSql($ownerPmsAdminId, 'c');
 $duplicate = dbFetchOne(
@@ -143,7 +143,7 @@ writeAuditLog($conn, $authUser, 'client.updated', 'client', $id, [
     'owner_pms_admin_id' => $ownerPmsAdminId,
 ]);
 
-$client = assertClientAccessible($conn, $authUser, $id, true);
+$client = fetchClientRecordById($conn, $id, true);
 
 jsonResponse([
     'status' => 'Success',

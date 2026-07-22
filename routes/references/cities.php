@@ -15,7 +15,7 @@ if ($table === null) {
 }
 
 $q = lookupSearchTerm();
-$limit = lookupLimit(50, 100);
+$limit = lookupLimit(100, 100);
 $offset = lookupOffset();
 
 $where = '';

@@ -25,7 +25,7 @@ $clientsAddress = composeAddressWithLocation(
 $clientsHqLocation = optionalStringField($payload, 'clients_hq_location') ?: $clientsCity;
 $clientsCategory = requireStringField($payload, 'clients_category', 'Client category');
 $requestedOwnerPmsAdminId = isset($payload['owner_pms_admin_id']) ? (int) $payload['owner_pms_admin_id'] : null;
-$ownerPmsAdminId = resolveAssignableOwnerPmsAdminId($conn, $authUser, $requestedOwnerPmsAdminId);
+$ownerPmsAdminId = resolveClientOwnerPmsAdminId($conn, $authUser, $requestedOwnerPmsAdminId);
 
 [$dupOwnerSql, $dupOwnerTypes, $dupOwnerParams] = ownerDuplicateSql($ownerPmsAdminId, 'c');
 $existing = dbFetchOne(
@@ -72,7 +72,7 @@ writeAuditLog($conn, $authUser, 'client.created', 'client', $clientId, [
     'created_by_id' => $createdById,
 ]);
 
-$client = assertClientAccessible($conn, $authUser, $clientId, true);
+$client = fetchClientRecordById($conn, $clientId, true);
 
 jsonResponse([
     'status' => 'Success',

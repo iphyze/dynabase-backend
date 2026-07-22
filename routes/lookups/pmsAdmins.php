@@ -10,25 +10,12 @@ requireMethod('GET');
 $authUser = authenticateUser();
 
 $q = lookupSearchTerm();
-$limit = lookupLimit(20, 50);
+$limit = lookupLimit(500, 500);
 $offset = lookupOffset();
 
 $where = " WHERE status = 'active' AND (role = 'pms_admin' OR is_pms_admin = 1)";
 $types = '';
 $params = [];
-
-if (isPmsWorkspaceUser($authUser)) {
-    $fixedOwnerId = resolveOwnerPmsAdminId($authUser);
-    if ($fixedOwnerId === null || $fixedOwnerId <= 0) {
-        $where .= ' AND 1 = 0';
-    } else {
-        $where .= ' AND id = ?';
-        $types .= 'i';
-        $params[] = $fixedOwnerId;
-    }
-} elseif (!isGlobalDataUser($authUser)) {
-    throw new RuntimeException('You are not authorised to view PMS Admin lookup.', 403);
-}
 
 if ($q !== '') {
     $where .= ' AND (first_name LIKE ? OR last_name LIKE ? OR email LIKE ?)';
@@ -40,7 +27,7 @@ if ($q !== '') {
 $total = dbScalarInt($conn, "SELECT COUNT(*) AS total FROM users{$where}", $types, $params);
 $rows = dbFetchAll(
     $conn,
-    "SELECT id, first_name, last_name, role, is_pms_admin
+    "SELECT id, first_name, last_name, email, role, is_pms_admin
      FROM users{$where}
      ORDER BY first_name ASC, last_name ASC
      LIMIT ? OFFSET ?",
@@ -56,6 +43,7 @@ $data = array_map(static function (array $row): array {
         'id' => (int) $row['id'],
         'first_name' => $row['first_name'],
         'last_name' => $row['last_name'],
+        'email' => $row['email'],
         'role' => $row['role'],
         'is_pms_admin' => (int) $row['is_pms_admin'] === 1,
     ]);

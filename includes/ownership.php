@@ -34,6 +34,57 @@ function resolveAssignableOwnerPmsAdminId(mysqli $conn, array $authUser, ?int $r
     return (int) $pmsAdmin['id'];
 }
 
+
+function resolveClientOwnerPmsAdminId(mysqli $conn, array $authUser, ?int $requestedOwnerPmsAdminId = null): int
+{
+    $ownerPmsAdminId = $requestedOwnerPmsAdminId !== null && $requestedOwnerPmsAdminId > 0
+        ? $requestedOwnerPmsAdminId
+        : null;
+
+    if ($ownerPmsAdminId === null && userActsAsPmsAdmin($authUser)) {
+        $ownerPmsAdminId = (int) ($authUser['id'] ?? 0);
+    }
+
+    if ($ownerPmsAdminId === null && userRole($authUser) === DYNABASE_ROLE_PMS_USER) {
+        $parentPmsAdminId = (int) ($authUser['parent_pms_admin_id'] ?? 0);
+        $ownerPmsAdminId = $parentPmsAdminId > 0 ? $parentPmsAdminId : null;
+    }
+
+    if ($ownerPmsAdminId === null || $ownerPmsAdminId <= 0) {
+        throw new RuntimeException('Please assign this client to a PMS Admin.', 422);
+    }
+
+    $pmsAdmin = dbFetchOne(
+        $conn,
+        "SELECT id FROM users WHERE id = ? AND status = 'active' AND (role = 'pms_admin' OR is_pms_admin = 1) LIMIT 1",
+        'i',
+        [$ownerPmsAdminId]
+    );
+
+    if (!$pmsAdmin) {
+        throw new RuntimeException('The selected PMS Admin is not available.', 422);
+    }
+
+    return (int) $pmsAdmin['id'];
+}
+
+function fetchClientRecordById(mysqli $conn, int $clientId, bool $includeInactive = false): array
+{
+    $statusSql = $includeInactive ? '' : " AND status = 'active'";
+    $client = dbFetchOne(
+        $conn,
+        "SELECT * FROM clients_table WHERE id = ?{$statusSql} LIMIT 1",
+        'i',
+        [$clientId]
+    );
+
+    if (!$client) {
+        throw new RuntimeException('Client not found.', 404);
+    }
+
+    return $client;
+}
+
 function scopedRecordWhere(array $authUser, string $alias = ''): array
 {
     return buildPmsOwnershipWhereClause($authUser, $alias);

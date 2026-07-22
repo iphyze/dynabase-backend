@@ -366,6 +366,8 @@ function routePermissionForPath(string $path): string|array|null
         '/lookups/pms-admins' => [
             'users.view',
             'clients.view',
+            'clients.create',
+            'clients.edit',
             'keypersons.view',
             'gift_lists.view',
             'tenders.view',
