@@ -34,6 +34,94 @@ function dynabaseMailTransport(): string
     return strtolower(trim(envString('MAIL_DRIVER', 'smtp'))) === 'log' ? 'log' : 'smtp';
 }
 
+/**
+ * Reject blank, malformed and known placeholder addresses before PHPMailer.
+ * This mirrors the working appraisal mailer while retaining array recipients.
+ */
+function dynabaseIsDeliverableEmail(mixed $email): bool
+{
+    $email = strtolower(trim((string) $email));
+
+    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return false;
+    }
+
+    $domain = substr(strrchr($email, '@') ?: '', 1);
+    if (
+        $domain === ''
+        || $domain === 'invalid'
+        || str_ends_with($domain, '.invalid')
+    ) {
+        return false;
+    }
+
+    if (
+        str_starts_with($email, 'legacy.')
+        || str_contains($email, '@archive.invalid')
+    ) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * SMTP diagnostic logger. MAIL_LOG_PATH may point to a private writable file.
+ * When it is not configured, messages are written to the PHP error log.
+ */
+function dynabaseLogMailEvent(string $message, array $context = []): void
+{
+    $logPath = dynabaseMailEnv(['MAIL_LOG_PATH']);
+    $line = sprintf(
+        "[%s] %s%s%s",
+        date('Y-m-d H:i:s'),
+        $message,
+        $context !== [] ? ' ' . json_encode($context, JSON_UNESCAPED_SLASHES) : '',
+        PHP_EOL
+    );
+
+    if ($logPath !== '') {
+        $directory = dirname($logPath);
+        if (is_dir($directory) && is_writable($directory)) {
+            error_log($line, 3, $logPath);
+            return;
+        }
+    }
+
+    error_log(rtrim($line));
+}
+
+function dynabaseConfiguredEncryption(PHPMailer $mail, string $encryption, int $port): void
+{
+    $encryption = strtolower(trim($encryption));
+
+    if ($encryption === '' || $encryption === 'auto') {
+        $encryption = $port === 465 ? 'smtps' : 'tls';
+    }
+
+    if (in_array($encryption, ['smtps', 'ssl'], true)) {
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+        $mail->SMTPAutoTLS = false;
+        return;
+    }
+
+    if (in_array($encryption, ['tls', 'starttls'], true)) {
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->SMTPAutoTLS = true;
+        return;
+    }
+
+    if (in_array($encryption, ['none', 'off', 'false'], true)) {
+        $mail->SMTPSecure = false;
+        $mail->SMTPAutoTLS = false;
+        return;
+    }
+
+    throw new RuntimeException(
+        'SMTP_ENCRYPTION must be smtps, ssl, tls, starttls, none or auto.'
+    );
+}
+
 function configuredMailer(): PHPMailer|string
 {
     if (!envBool('MAIL_ENABLED', false)) {
@@ -45,45 +133,45 @@ function configuredMailer(): PHPMailer|string
     }
 
     try {
+        $smtpHost = dynabaseRequiredMailSetting(['SMTP_HOST'], 'SMTP_HOST');
+        $smtpPort = max(1, (int) dynabaseMailEnv(['SMTP_PORT'], '465'));
+        $smtpAuth = envBool('SMTP_AUTH', true);
+        $smtpUser = $smtpAuth
+            ? dynabaseRequiredMailSetting(['SMTP_USERNAME', 'SMTP_USER'], 'SMTP_USERNAME')
+            : dynabaseMailEnv(['SMTP_USERNAME', 'SMTP_USER']);
+        $smtpPass = $smtpAuth
+            ? dynabaseRequiredMailSetting(['SMTP_PASSWORD', 'SMTP_PASS'], 'SMTP_PASSWORD')
+            : dynabaseMailEnv(['SMTP_PASSWORD', 'SMTP_PASS']);
+
+        if (str_contains($smtpHost, '@') || str_contains($smtpHost, '://')) {
+            throw new RuntimeException(
+                'SMTP_HOST must be a mail-server hostname such as mail.example.com, not an email address or URL.'
+            );
+        }
+
         $mail = new PHPMailer(true);
         $mail->isSMTP();
-        $mail->SMTPAuth = envBool('SMTP_AUTH', true);
-        $mail->Host = dynabaseRequiredMailSetting(['SMTP_HOST'], 'SMTP_HOST');
-        $mail->Port = max(1, (int) dynabaseMailEnv(['SMTP_PORT'], '587'));
+        $mail->Host = $smtpHost;
+        $mail->Port = $smtpPort;
+        $mail->SMTPAuth = $smtpAuth;
+        $mail->Username = $smtpUser;
+        $mail->Password = $smtpPass;
 
-        if ($mail->SMTPAuth) {
-            $mail->Username = dynabaseRequiredMailSetting(['SMTP_USERNAME', 'SMTP_USER'], 'SMTP_USERNAME');
-            $mail->Password = dynabaseRequiredMailSetting(['SMTP_PASSWORD', 'SMTP_PASS'], 'SMTP_PASSWORD');
-        }
+        dynabaseConfiguredEncryption(
+            $mail,
+            dynabaseMailEnv(['SMTP_ENCRYPTION'], $smtpPort === 465 ? 'smtps' : 'tls'),
+            $smtpPort
+        );
 
-        /*
-         * Match the SMTP behaviour that is already working in the user's other
-         * application. Port 587 with SMTP_ENCRYPTION=tls is allowed to negotiate
-         * STARTTLS automatically instead of forcing the crypto mode before the
-         * server advertises its capabilities. Explicit SMTPS and no-encryption
-         * modes remain available where required.
-         */
-        $encryption = strtolower(dynabaseMailEnv(['SMTP_ENCRYPTION'], 'auto'));
-        if (in_array($encryption, ['smtps', 'ssl'], true)) {
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
-            $mail->SMTPAutoTLS = false;
-        } elseif (in_array($encryption, ['none', 'off', 'false'], true)) {
-            $mail->SMTPSecure = false;
-            $mail->SMTPAutoTLS = false;
-        } else {
-            // Covers tls, starttls and auto. PHPMailer upgrades the connection
-            // after the server advertises STARTTLS support.
-            $mail->SMTPSecure = '';
-            $mail->SMTPAutoTLS = true;
-        }
-
-        $mail->Timeout = max(5, min((int) dynabaseMailEnv(['SMTP_TIMEOUT'], '20'), 60));
-        // $mail->Timelimit = max(5, min((int) dynabaseMailEnv(['SMTP_TIME_LIMIT'], '30'), 60));
-        $mail->CharSet = PHPMailer::CHARSET_UTF8;
-        $mail->Encoding = PHPMailer::ENCODING_BASE64;
+        // Match the known-good appraisal transport behaviour.
+        $mail->Timeout = max(5, min((int) dynabaseMailEnv(['SMTP_TIMEOUT'], '30'), 120));
+        $mail->getSMTPInstance()->Timelimit = max(5, min((int) dynabaseMailEnv(['SMTP_TIME_LIMIT'], '30'), 120));
         $mail->SMTPKeepAlive = false;
+        $mail->CharSet = PHPMailer::CHARSET_UTF8;
+        // Leave PHPMailer on its default transfer encoding instead of forcing
+        // the entire message to Base64. This is friendlier to more mail filters.
 
-        $authType = trim(dynabaseMailEnv(['SMTP_AUTH_TYPE']));
+        $authType = dynabaseMailEnv(['SMTP_AUTH_TYPE']);
         if ($authType !== '') {
             $mail->AuthType = $authType;
         }
@@ -91,8 +179,13 @@ function configuredMailer(): PHPMailer|string
         if (envBool('SMTP_DEBUG', false)) {
             $mail->SMTPDebug = 2;
             $mail->Debugoutput = static function (string $message, int $level): void {
-                error_log('[Dynabase SMTP ' . $level . '] ' . trim($message));
+                dynabaseLogMailEvent('SMTP debug', [
+                    'level' => $level,
+                    'message' => trim($message),
+                ]);
             };
+        } else {
+            $mail->SMTPDebug = 0;
         }
 
         if (!envBool('SMTP_VERIFY_PEER', true)) {
@@ -105,12 +198,20 @@ function configuredMailer(): PHPMailer|string
             ];
         }
 
+        /*
+         * Use the authenticated mailbox as the default From and envelope sender,
+         * exactly like the working appraisal mailer. A separate From address is
+         * still supported, but the envelope sender remains authenticated so SPF,
+         * bounce processing and recipient-server checks are more consistent.
+         */
         $fromEmail = dynabaseMailEnv(
             ['SMTP_FROM_EMAIL', 'MAIL_FROM_ADDRESS'],
-            $mail->Username
+            $smtpUser
         );
-        if ($fromEmail === '' || !filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
-            throw new RuntimeException('SMTP_FROM_EMAIL is not configured with a valid email address.');
+        if (!dynabaseIsDeliverableEmail($fromEmail)) {
+            throw new RuntimeException(
+                'SMTP_FROM_EMAIL is not configured with a valid deliverable email address.'
+            );
         }
 
         $fromName = dynabaseMailEnv(
@@ -119,8 +220,19 @@ function configuredMailer(): PHPMailer|string
         );
         $mail->setFrom($fromEmail, $fromName !== '' ? $fromName : 'Lambert Electromec');
 
-        $replyToEmail = dynabaseMailEnv(['SMTP_REPLY_TO_EMAIL', 'MAIL_REPLY_TO_ADDRESS']);
-        if ($replyToEmail !== '' && filter_var($replyToEmail, FILTER_VALIDATE_EMAIL)) {
+        $returnPath = dynabaseMailEnv(
+            ['SMTP_RETURN_PATH'],
+            dynabaseIsDeliverableEmail($smtpUser) ? $smtpUser : $fromEmail
+        );
+        if (dynabaseIsDeliverableEmail($returnPath)) {
+            $mail->Sender = $returnPath;
+        }
+
+        $replyToEmail = dynabaseMailEnv(
+            ['SMTP_REPLY_TO_EMAIL', 'MAIL_REPLY_TO_ADDRESS'],
+            $fromEmail
+        );
+        if (dynabaseIsDeliverableEmail($replyToEmail)) {
             $replyToName = dynabaseMailEnv(
                 ['SMTP_REPLY_TO_NAME', 'MAIL_REPLY_TO_NAME'],
                 $fromName
@@ -130,7 +242,9 @@ function configuredMailer(): PHPMailer|string
 
         return $mail;
     } catch (Throwable $exception) {
-        error_log('[Dynabase Mail Configuration] ' . $exception->getMessage());
+        dynabaseLogMailEvent('Mail configuration failed.', [
+            'error' => $exception->getMessage(),
+        ]);
         return $exception->getMessage();
     }
 }
@@ -142,13 +256,14 @@ function dynabaseMailError(?PHPMailer $mail, Throwable $exception): string
         $message = $exception->getMessage();
     }
 
-    error_log('[Dynabase Mail] ' . $message);
+    dynabaseLogMailEvent('Email delivery failed.', ['error' => $message]);
     return $message;
 }
 
 function dynabaseNormalizeRecipients(array $recipients): array
 {
     $normalized = [];
+
     foreach ($recipients as $recipient) {
         if (is_string($recipient)) {
             $email = trim($recipient);
@@ -158,9 +273,19 @@ function dynabaseNormalizeRecipients(array $recipients): array
             $name = trim((string) ($recipient['name'] ?? ''));
         }
 
-        if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $normalized[strtolower($email)] = ['email' => $email, 'name' => $name];
+        if (!dynabaseIsDeliverableEmail($email)) {
+            if ($email !== '') {
+                dynabaseLogMailEvent('Recipient skipped: no deliverable email.', [
+                    'recipient' => $email,
+                ]);
+            }
+            continue;
         }
+
+        $normalized[strtolower($email)] = [
+            'email' => $email,
+            'name' => $name,
+        ];
     }
 
     return array_values($normalized);
@@ -193,10 +318,45 @@ function dynabaseWriteMailLog(array $options): bool|string
     }
 }
 
+function dynabaseAddRecipients(
+    PHPMailer $mailer,
+    array $recipients,
+    string $type,
+    array &$seen
+): void {
+    foreach ($recipients as $recipient) {
+        $email = strtolower($recipient['email']);
+        if (isset($seen[$email])) {
+            continue;
+        }
+
+        if ($type === 'to') {
+            $mailer->addAddress($recipient['email'], $recipient['name']);
+        } elseif ($type === 'cc') {
+            $mailer->addCC($recipient['email'], $recipient['name']);
+        } else {
+            $mailer->addBCC($recipient['email'], $recipient['name']);
+        }
+
+        $seen[$email] = true;
+    }
+}
+
 function sendDynabaseMail(array $options): bool|string
 {
     if (dynabaseMailTransport() === 'log') {
         return dynabaseWriteMailLog($options);
+    }
+
+    $to = dynabaseNormalizeRecipients($options['to'] ?? []);
+    $cc = dynabaseNormalizeRecipients($options['cc'] ?? []);
+    $bcc = dynabaseNormalizeRecipients($options['bcc'] ?? []);
+
+    if ($to === []) {
+        dynabaseLogMailEvent('Mail skipped: no deliverable primary recipient.', [
+            'subject' => (string) ($options['subject'] ?? 'Dynabase notification'),
+        ]);
+        return 'skipped_no_deliverable_email';
     }
 
     $mailer = configuredMailer();
@@ -205,27 +365,38 @@ function sendDynabaseMail(array $options): bool|string
     }
 
     try {
-        foreach (dynabaseNormalizeRecipients($options['to'] ?? []) as $recipient) {
-            $mailer->addAddress($recipient['email'], $recipient['name']);
-        }
-        foreach (dynabaseNormalizeRecipients($options['cc'] ?? []) as $recipient) {
-            $mailer->addCC($recipient['email'], $recipient['name']);
-        }
-        foreach (dynabaseNormalizeRecipients($options['bcc'] ?? []) as $recipient) {
-            $mailer->addBCC($recipient['email'], $recipient['name']);
-        }
+        $seen = [];
+        dynabaseAddRecipients($mailer, $to, 'to', $seen);
+        dynabaseAddRecipients($mailer, $cc, 'cc', $seen);
+        dynabaseAddRecipients($mailer, $bcc, 'bcc', $seen);
 
-        if (count($mailer->getToAddresses()) === 0) {
-            throw new RuntimeException('At least one recipient email address is required.');
-        }
+        $subject = (string) ($options['subject'] ?? 'Dynabase notification');
+        $html = (string) ($options['html'] ?? '');
+        $text = trim((string) ($options['text'] ?? '')) !== ''
+            ? (string) $options['text']
+            : dynabaseEmailTextFromHtml($html);
 
         $mailer->isHTML(true);
-        $mailer->Subject = (string) ($options['subject'] ?? 'Dynabase notification');
-        $mailer->Body = (string) ($options['html'] ?? '');
-        $mailer->AltBody = trim((string) ($options['text'] ?? '')) !== ''
-            ? (string) $options['text']
-            : dynabaseEmailTextFromHtml((string) ($options['html'] ?? ''));
+        $mailer->Subject = $subject;
+        $mailer->Body = $html;
+        $mailer->AltBody = $text;
+
+        dynabaseLogMailEvent('Attempting email delivery.', [
+            'to' => array_column($to, 'email'),
+            'cc_count' => count($cc),
+            'bcc_count' => count($bcc),
+            'subject' => $subject,
+            'smtp_host' => $mailer->Host,
+            'smtp_port' => $mailer->Port,
+            'encryption' => (string) $mailer->SMTPSecure,
+        ]);
+
         $mailer->send();
+
+        dynabaseLogMailEvent('Email submitted successfully.', [
+            'to' => array_column($to, 'email'),
+            'subject' => $subject,
+        ]);
 
         return true;
     } catch (Throwable $exception) {
