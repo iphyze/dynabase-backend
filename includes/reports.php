@@ -69,6 +69,7 @@ function dynabaseReportAccessRules(): array
         'prequalifications' => ['view' => 'prequalifications.view', 'export' => 'prequalifications.export'],
         'submission-register' => ['view' => 'submission_register.view', 'export' => 'submission_register.export'],
         'documents' => ['view' => 'documents.view', 'export' => 'documents.export'],
+        'agreement-register' => ['view' => 'agreement_register.view', 'export' => 'agreement_register.export'],
     ];
 }
 
@@ -1043,6 +1044,369 @@ function dynabaseReportDocumentWorkbook(mysqli $conn, array $authUser): array
     return $sheets;
 }
 
+function dynabaseReportAgreementFilters(array $source): array
+{
+    $yearRaw = cleanString($source['agreement_year'] ?? $source['year'] ?? 'all');
+    $year = 0;
+    if ($yearRaw !== '' && strtolower($yearRaw) !== 'all') {
+        $year = (int) $yearRaw;
+        if ($year < 2000 || $year > ((int) date('Y') + 1)) {
+            throw new RuntimeException('Please choose a valid agreement year.', 422);
+        }
+    }
+
+    $type = strtoupper(cleanString($source['document_ref_type'] ?? ''));
+    if ($type !== '' && !in_array($type, ['NDA', 'MOU'], true)) {
+        throw new RuntimeException('Please choose a valid agreement type.', 422);
+    }
+
+    $status = cleanString($source['status'] ?? '');
+    $allowedStatuses = [
+        'Draft', 'Under Review', 'Sent', 'Awaiting Client Signature', 'Awaiting Lambert Signature',
+        'Fully Executed', 'Active', 'Expiring Soon', 'Renewed', 'Expired', 'Terminated', 'Archived',
+    ];
+    if ($status !== '' && !in_array($status, $allowedStatuses, true)) {
+        throw new RuntimeException('Please choose a valid agreement status.', 422);
+    }
+
+    $renewal = cleanString($source['renewal'] ?? '');
+    if ($renewal !== '' && !in_array($renewal, ['Yes', 'No'], true)) {
+        throw new RuntimeException('Please choose a valid renewal option.', 422);
+    }
+
+    return [
+        'year' => $year,
+        'document_ref_type' => $type,
+        'status' => $status,
+        'renewal' => $renewal,
+        'department' => cleanString($source['department'] ?? ''),
+        'q' => cleanString($source['q'] ?? $source['search'] ?? ''),
+    ];
+}
+
+function dynabaseReportAgreementWhere(array $authUser, array $filters): array
+{
+    $where = " WHERE a.record_status = 'active'";
+    $types = '';
+    $params = [];
+
+    if (($filters['year'] ?? 0) > 0) {
+        $where .= ' AND a.ref_year = ?';
+        $types .= 'i';
+        $params[] = (int) $filters['year'];
+    }
+    if (($filters['document_ref_type'] ?? '') !== '') {
+        $where .= ' AND a.document_ref_type = ?';
+        $types .= 's';
+        $params[] = $filters['document_ref_type'];
+    }
+    if (($filters['status'] ?? '') !== '') {
+        $where .= ' AND a.status = ?';
+        $types .= 's';
+        $params[] = $filters['status'];
+    }
+    if (($filters['renewal'] ?? '') !== '') {
+        $where .= ' AND a.renewal = ?';
+        $types .= 's';
+        $params[] = $filters['renewal'];
+    }
+    if (($filters['department'] ?? '') !== '') {
+        $where .= ' AND a.department LIKE ?';
+        $types .= 's';
+        $params[] = '%' . $filters['department'] . '%';
+    }
+    if (($filters['q'] ?? '') !== '') {
+        $like = '%' . $filters['q'] . '%';
+        $where .= ' AND (a.document_ref_no LIKE ? OR a.project_subject LIKE ? OR a.client_company LIKE ? OR a.counterparty_contact_person LIKE ? OR a.purpose LIKE ? OR a.department LIKE ?)';
+        $types .= 'ssssss';
+        for ($index = 0; $index < 6; $index++) $params[] = $like;
+    }
+
+    [$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'a');
+    $where .= $scopeSql;
+    $types .= $scopeTypes;
+    $params = array_merge($params, $scopeParams);
+    return [$where, $types, $params];
+}
+
+function dynabaseReportAgreementRows(mysqli $conn, array $authUser, array $filters = []): array
+{
+    if (!dynabaseReportTableExists($conn, 'agreement_registers')) return [];
+    [$where, $types, $params] = dynabaseReportAgreementWhere($authUser, $filters);
+    return dbFetchAll(
+        $conn,
+        "SELECT a.id, a.document_ref_type, a.document_ref_no, a.ref_year, a.project_subject,
+                a.client_company, a.counterparty_contact_person, a.issued_by, a.date_issued, a.date_sent,
+                a.date_received, a.lambert_signatory, a.client_signatory, a.effective_date, a.expiry_date,
+                a.duration, a.renewal, a.status, a.purpose, a.department, a.reminder_date,
+                a.reminder_sent_at, a.reminder_last_status, a.remark, a.linked_document_id,
+                a.renewed_from_id, a.renewed_to_id, a.owner_pms_admin_id, a.created_at, a.updated_at,
+                CASE WHEN a.reminder_sent_at IS NULL AND a.reminder_date <= CURRENT_DATE() THEN 1 ELSE 0 END AS reminder_due,
+                CASE WHEN a.expiry_date IS NULL THEN NULL ELSE DATEDIFF(a.expiry_date, CURRENT_DATE()) END AS days_to_expiry,
+                CASE WHEN a.date_sent IS NULL THEN NULL ELSE DATEDIFF(CURRENT_DATE(), a.date_sent) END AS days_since_sent,
+                NULLIF(TRIM(CONCAT(COALESCE(owner.first_name, ''), ' ', COALESCE(owner.last_name, ''))), '') AS owner_name,
+                d.document_title AS linked_document_title
+         FROM agreement_registers a
+         LEFT JOIN users owner ON owner.id = a.owner_pms_admin_id
+         LEFT JOIN document_table d ON d.id = a.linked_document_id
+         {$where}
+         ORDER BY a.ref_year DESC, a.document_ref_type ASC, a.ref_sequence DESC, a.id DESC",
+        $types,
+        $params
+    );
+}
+
+function dynabaseReportAgreementAvailableYears(mysqli $conn, array $authUser): array
+{
+    if (!dynabaseReportTableExists($conn, 'agreement_registers')) return [];
+    [$scopeSql, $types, $params] = appendScopedWhere($authUser, 'a');
+    $rows = dbFetchAll(
+        $conn,
+        "SELECT DISTINCT a.ref_year FROM agreement_registers a WHERE a.record_status = 'active'{$scopeSql} ORDER BY a.ref_year DESC",
+        $types,
+        $params
+    );
+    return array_values(array_map(static fn (array $row): int => (int) $row['ref_year'], $rows));
+}
+
+function dynabaseReportAgreementAnalytics(array $rows): array
+{
+    $status = [];
+    $types = ['NDA' => 0, 'MOU' => 0];
+    $departments = [];
+    $clients = [];
+    $issuedBy = ['Lambert' => 0, 'Client' => 0];
+    $total = count($rows);
+    $metrics = [
+        'active' => 0,
+        'awaiting_signature' => 0,
+        'expiring_soon' => 0,
+        'expired' => 0,
+        'reminders_due' => 0,
+        'renewal_candidates' => 0,
+        'pending_signature_over_30_days' => 0,
+        'without_document' => 0,
+        'without_expiry_date' => 0,
+    ];
+    $attention = [];
+
+    foreach ($rows as $row) {
+        $statusName = dynabaseReportCleanLabel($row['status'] ?? null);
+        $status[$statusName] = ($status[$statusName] ?? 0) + 1;
+        $type = strtoupper(trim((string) ($row['document_ref_type'] ?? '')));
+        if (isset($types[$type])) $types[$type]++;
+        $department = dynabaseReportCleanLabel($row['department'] ?? null);
+        $departments[$department] = ($departments[$department] ?? 0) + 1;
+        $client = dynabaseReportCleanLabel($row['client_company'] ?? null);
+        $clients[$client] = ($clients[$client] ?? 0) + 1;
+        $issuer = dynabaseReportCleanLabel($row['issued_by'] ?? null);
+        if (isset($issuedBy[$issuer])) $issuedBy[$issuer]++;
+
+        if ($statusName === 'Active') $metrics['active']++;
+        if (in_array($statusName, ['Awaiting Client Signature', 'Awaiting Lambert Signature'], true)) $metrics['awaiting_signature']++;
+        if ($statusName === 'Expiring Soon') $metrics['expiring_soon']++;
+        if ($statusName === 'Expired') $metrics['expired']++;
+        if ((int) ($row['reminder_due'] ?? 0) === 1) $metrics['reminders_due']++;
+        if (($row['renewal'] ?? '') === 'Yes' && in_array($statusName, ['Active', 'Expiring Soon', 'Expired'], true)) $metrics['renewal_candidates']++;
+        if (in_array($statusName, ['Awaiting Client Signature', 'Awaiting Lambert Signature'], true) && (int) ($row['days_since_sent'] ?? 0) > 30) $metrics['pending_signature_over_30_days']++;
+        if (empty($row['linked_document_id'])) $metrics['without_document']++;
+        if (empty($row['expiry_date'])) $metrics['without_expiry_date']++;
+
+        $reasons = [];
+        if ((int) ($row['reminder_due'] ?? 0) === 1) $reasons[] = 'Reminder due';
+        if ($statusName === 'Expiring Soon') $reasons[] = 'Expiring soon';
+        if ($statusName === 'Expired') $reasons[] = 'Expired';
+        if (in_array($statusName, ['Awaiting Client Signature', 'Awaiting Lambert Signature'], true)) {
+            $days = $row['days_since_sent'] !== null ? (int) $row['days_since_sent'] : null;
+            $reasons[] = $days !== null ? "Signature pending {$days} days" : 'Signature pending';
+        }
+        if (($row['renewal'] ?? '') === 'Yes' && in_array($statusName, ['Expiring Soon', 'Expired'], true)) $reasons[] = 'Renewal decision';
+        if ($reasons !== []) {
+            $copy = $row;
+            $copy['attention_reason'] = implode(' · ', array_values(array_unique($reasons)));
+            $attention[] = $copy;
+        }
+    }
+
+    arsort($status);
+    arsort($departments);
+    arsort($clients);
+    usort($attention, static function (array $a, array $b): int {
+        $aDue = (int) ($a['reminder_due'] ?? 0);
+        $bDue = (int) ($b['reminder_due'] ?? 0);
+        if ($aDue !== $bDue) return $bDue <=> $aDue;
+        $aExpiry = $a['days_to_expiry'] === null ? PHP_INT_MAX : (int) $a['days_to_expiry'];
+        $bExpiry = $b['days_to_expiry'] === null ? PHP_INT_MAX : (int) $b['days_to_expiry'];
+        return $aExpiry <=> $bExpiry;
+    });
+
+    $toNamed = static fn (array $counts): array => array_map(
+        static fn (string $label, int $count): array => ['label' => $label, 'count' => $count],
+        array_keys($counts),
+        array_values($counts)
+    );
+
+    return [
+        'total' => $total,
+        'metrics' => $metrics,
+        'by_status' => $toNamed($status),
+        'by_type' => $toNamed($types),
+        'by_department' => array_slice($toNamed($departments), 0, 12),
+        'top_clients' => array_slice($toNamed($clients), 0, 12),
+        'by_issued_by' => $toNamed($issuedBy),
+        'attention_queue' => array_slice($attention, 0, 25),
+    ];
+}
+
+function dynabaseReportAgreementOverview(mysqli $conn, array $authUser, array $filters = []): array
+{
+    $access = dynabaseReportAccessForUser($conn, $authUser, 'agreement-register');
+    if (!$access['can_view']) {
+        throw new RuntimeException('You do not have access to Agreement Register reporting.', 403);
+    }
+    $rows = dynabaseReportAgreementRows($conn, $authUser, $filters);
+    $analytics = dynabaseReportAgreementAnalytics($rows);
+    $analytics['filters'] = $filters;
+    $analytics['available_years'] = dynabaseReportAgreementAvailableYears($conn, $authUser);
+    $analytics['can_export'] = $access['can_export'];
+    $analytics['generated_at'] = date(DATE_ATOM);
+    return $analytics;
+}
+
+function dynabaseReportAgreementWorkbook(mysqli $conn, array $authUser, array $filters = []): array
+{
+    $rows = dynabaseReportAgreementRows($conn, $authUser, $filters);
+    $analytics = dynabaseReportAgreementAnalytics($rows);
+    $generated = date('d M Y, h:i A');
+    $filterLabel = [];
+    if (($filters['year'] ?? 0) > 0) $filterLabel[] = 'Year ' . $filters['year'];
+    if (($filters['document_ref_type'] ?? '') !== '') $filterLabel[] = $filters['document_ref_type'];
+    if (($filters['status'] ?? '') !== '') $filterLabel[] = $filters['status'];
+    if (($filters['renewal'] ?? '') !== '') $filterLabel[] = 'Renewal ' . $filters['renewal'];
+    if (($filters['department'] ?? '') !== '') $filterLabel[] = 'Department: ' . $filters['department'];
+    $scope = $filterLabel !== [] ? implode(' • ', $filterLabel) : 'All accessible agreements';
+
+    foreach ($rows as $index => &$row) {
+        $row['serial'] = $index + 1;
+        $row['reminder_due_label'] = (int) ($row['reminder_due'] ?? 0) === 1 ? 'Due' : (($row['reminder_sent_at'] ?? null) ? 'Sent' : 'Pending');
+        $row['document_label'] = !empty($row['linked_document_id']) ? 'Linked' : 'Not attached';
+        $row['days_to_expiry_label'] = $row['days_to_expiry'] === null ? '' : (int) $row['days_to_expiry'];
+    }
+    unset($row);
+
+    $register = dynabaseReportDataSheet(
+        'Agreement Register',
+        "{$scope}  •  Generated {$generated}",
+        ['S/N', 'Reference', 'Type', 'Project / Subject', 'Client / Company', 'Counterparty Contact', 'Issued By', 'Date Issued', 'Date Sent', 'Date Received', 'Lambert Signatory', 'Client Signatory', 'Effective Date', 'Expiry Date', 'Days to Expiry', 'Duration', 'Renewal', 'Status', 'Purpose', 'Department', 'Reminder Date', 'Reminder State', 'Document', 'PMS Owner', 'Remark', 'Last Updated'],
+        $rows,
+        [8, 19, 9, 28, 28, 25, 12, 15, 15, 15, 22, 22, 15, 15, 14, 18, 11, 24, 38, 20, 15, 15, 16, 22, 34, 18],
+        [
+            ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'],
+            ['key' => 'document_ref_no'], ['key' => 'document_ref_type', 'style' => DYNABASE_XLSX_STYLE_CENTER],
+            ['key' => 'project_subject'], ['key' => 'client_company'], ['key' => 'counterparty_contact_person'],
+            ['key' => 'issued_by', 'style' => DYNABASE_XLSX_STYLE_CENTER],
+            ['key' => 'date_issued', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+            ['key' => 'date_sent', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+            ['key' => 'date_received', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+            ['key' => 'lambert_signatory'], ['key' => 'client_signatory'],
+            ['key' => 'effective_date', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+            ['key' => 'expiry_date', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+            ['key' => 'days_to_expiry_label', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+            ['key' => 'duration'], ['key' => 'renewal', 'style' => DYNABASE_XLSX_STYLE_CENTER], ['key' => 'status'],
+            ['key' => 'purpose', 'style' => DYNABASE_XLSX_STYLE_WRAP], ['key' => 'department'],
+            ['key' => 'reminder_date', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'], ['key' => 'reminder_due_label'],
+            ['key' => 'document_label'], ['key' => 'owner_name'], ['key' => 'remark', 'style' => DYNABASE_XLSX_STYLE_WRAP],
+            ['key' => 'updated_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+        ]
+    );
+    $register['name'] = 'Agreement Register';
+
+    $metricRows = [
+        ['Total agreements', $analytics['total']],
+        ['Active', $analytics['metrics']['active']],
+        ['Awaiting signature', $analytics['metrics']['awaiting_signature']],
+        ['Signature pending > 30 days', $analytics['metrics']['pending_signature_over_30_days']],
+        ['Expiring soon', $analytics['metrics']['expiring_soon']],
+        ['Expired', $analytics['metrics']['expired']],
+        ['Reminders due', $analytics['metrics']['reminders_due']],
+        ['Renewal candidates', $analytics['metrics']['renewal_candidates']],
+        ['Without attached document', $analytics['metrics']['without_document']],
+        ['Without expiry date', $analytics['metrics']['without_expiry_date']],
+    ];
+    $summaryTables = [
+        ['title' => 'Management KPIs', 'headers' => ['Metric', 'Count'], 'rows' => $metricRows],
+        ['title' => 'Status Distribution', 'headers' => ['Status', 'Count'], 'rows' => array_map(static fn (array $item): array => [$item['label'], $item['count']], $analytics['by_status'])],
+        ['title' => 'Agreement Type', 'headers' => ['Type', 'Count'], 'rows' => array_map(static fn (array $item): array => [$item['label'], $item['count']], $analytics['by_type'])],
+        ['title' => 'Top Departments', 'headers' => ['Department', 'Count'], 'rows' => array_map(static fn (array $item): array => [$item['label'], $item['count']], $analytics['by_department'])],
+        ['title' => 'Top Clients / Companies', 'headers' => ['Client / Company', 'Count'], 'rows' => array_map(static fn (array $item): array => [$item['label'], $item['count']], $analytics['top_clients'])],
+    ];
+    $summary = dynabaseReportSummarySheet('Agreement Management Summary', "{$scope}  •  Generated {$generated}", $summaryTables);
+    $summary['name'] = 'Management Summary';
+
+    $attentionRows = $analytics['attention_queue'];
+    foreach ($attentionRows as $index => &$row) $row['serial'] = $index + 1;
+    unset($row);
+    $attention = dynabaseReportDataSheet(
+        'Agreement Attention Queue',
+        'Items requiring signatures, reminders, expiry action or renewal decisions',
+        ['S/N', 'Reference', 'Client / Company', 'Status', 'Attention', 'Date Sent', 'Days Since Sent', 'Expiry Date', 'Days to Expiry', 'Renewal', 'Reminder Date', 'Department', 'PMS Owner'],
+        $attentionRows,
+        [8, 20, 28, 24, 34, 15, 16, 15, 15, 11, 15, 20, 22],
+        [
+            ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'], ['key' => 'document_ref_no'],
+            ['key' => 'client_company'], ['key' => 'status'], ['key' => 'attention_reason', 'style' => DYNABASE_XLSX_STYLE_WRAP],
+            ['key' => 'date_sent', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+            ['key' => 'days_since_sent', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+            ['key' => 'expiry_date', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+            ['key' => 'days_to_expiry', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
+            ['key' => 'renewal', 'style' => DYNABASE_XLSX_STYLE_CENTER],
+            ['key' => 'reminder_date', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'], ['key' => 'department'], ['key' => 'owner_name'],
+        ]
+    );
+    $attention['name'] = 'Attention Queue';
+
+    $sheets = [$register, $summary, $attention];
+
+    if (dynabaseReportTableExists($conn, 'agreement_reminder_deliveries')) {
+        [$where, $whereTypes, $whereParams] = dynabaseReportAgreementWhere($authUser, $filters);
+        $deliveryRows = dbFetchAll(
+            $conn,
+            "SELECT ard.id, ard.agreement_id, a.document_ref_no, a.client_company, ard.reminder_date,
+                    ard.recipient_email, ard.delivery_mode, ard.satisfies_schedule, ard.status,
+                    ard.error_message, ard.triggered_by, ard.created_at
+             FROM agreement_reminder_deliveries ard
+             INNER JOIN agreement_registers a ON a.id = ard.agreement_id
+             {$where}
+             ORDER BY ard.created_at DESC, ard.id DESC",
+            $whereTypes,
+            $whereParams
+        );
+        foreach ($deliveryRows as $index => &$delivery) {
+            $delivery['serial'] = $index + 1;
+            $delivery['scheduled_label'] = (int) ($delivery['satisfies_schedule'] ?? 0) === 1 ? 'Yes' : 'No';
+        }
+        unset($delivery);
+        $deliverySheet = dynabaseReportDataSheet(
+            'Agreement Reminder Delivery',
+            'Automatic and manual reminder delivery history for the selected agreement scope',
+            ['S/N', 'Reference', 'Client / Company', 'Reminder Date', 'Recipient', 'Mode', 'Scheduled Reminder', 'Status', 'Error', 'Triggered By', 'Sent / Attempted'],
+            $deliveryRows,
+            [8, 20, 28, 15, 30, 12, 17, 12, 36, 28, 19],
+            [
+                ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'], ['key' => 'document_ref_no'], ['key' => 'client_company'],
+                ['key' => 'reminder_date', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'], ['key' => 'recipient_email'], ['key' => 'delivery_mode'],
+                ['key' => 'scheduled_label', 'style' => DYNABASE_XLSX_STYLE_CENTER], ['key' => 'status'], ['key' => 'error_message', 'style' => DYNABASE_XLSX_STYLE_WRAP],
+                ['key' => 'triggered_by'], ['key' => 'created_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+            ]
+        );
+        $deliverySheet['name'] = 'Reminder Delivery';
+        $sheets[] = $deliverySheet;
+    }
+
+    return $sheets;
+}
+
+
 function dynabaseReportCatalog(mysqli $conn, array $authUser): array
 {
     $count = static function (string $sql, string $types = '', array $params = []) use ($conn): int {
@@ -1125,6 +1489,18 @@ function dynabaseReportCatalog(mysqli $conn, array $authUser): array
             'record_count' => dynabaseReportTableExists($conn, 'document_table') ? $count('SELECT COUNT(*) AS total FROM document_table' . $documentWhere) : 0,
             'year_filter' => false, 'sheets' => $documentSheets,
         ],
+        [
+            'key' => 'agreement-register', 'title' => 'Agreement Register',
+            'description' => 'NDA/MOU lifecycle, signature bottlenecks, expiry exposure, renewals and reminder delivery reporting.',
+            'record_count' => dynabaseReportTableExists($conn, 'agreement_registers')
+                ? (function () use ($conn, $authUser): int {
+                    [$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'a');
+                    return dbScalarInt($conn, "SELECT COUNT(*) AS total FROM agreement_registers a WHERE a.record_status = 'active'{$scopeSql}", $scopeTypes, $scopeParams);
+                })()
+                : 0,
+            'year_filter' => true,
+            'sheets' => dynabaseReportTableExists($conn, 'agreement_reminder_deliveries') ? 4 : 3,
+        ],
     ];
 
     $catalog = [];
@@ -1157,7 +1533,7 @@ function dynabaseReportOverview(mysqli $conn, array $authUser, int $giftYear = 0
     ];
 }
 
-function dynabaseReportWorkbook(mysqli $conn, string $type, int $giftYear = 0, array $authUser = []): array
+function dynabaseReportWorkbook(mysqli $conn, string $type, int $giftYear = 0, array $authUser = [], array $filters = []): array
 {
     return match ($type) {
         'gift-lists' => dynabaseReportGiftWorkbook(dynabaseReportGiftRows($conn, $giftYear), $giftYear),
@@ -1169,6 +1545,7 @@ function dynabaseReportWorkbook(mysqli $conn, string $type, int $giftYear = 0, a
         'prequalifications' => dynabaseReportPrequalificationWorkbook($conn),
         'submission-register' => dynabaseReportSubmissionWorkbook($conn, $authUser),
         'documents' => dynabaseReportDocumentWorkbook($conn, $authUser),
+        'agreement-register' => dynabaseReportAgreementWorkbook($conn, $authUser, $filters),
         default => throw new RuntimeException('Unknown report type.', 404),
     };
 }
@@ -1186,6 +1563,7 @@ function dynabaseReportFilename(string $type, int $giftYear = 0): string
         'prequalifications' => 'dynabase-prequalification-readiness-' . $date . '.xlsx',
         'submission-register' => 'dynabase-submission-register-' . $date . '.xlsx',
         'documents' => 'dynabase-document-library-' . $date . '.xlsx',
+        'agreement-register' => 'dynabase-agreement-register-' . $date . '.xlsx',
         default => 'dynabase-report-' . $date . '.xlsx',
     };
 }

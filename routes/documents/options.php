@@ -61,7 +61,7 @@ jsonResponse([
     'status' => 'Success',
     'message' => 'Document options retrieved successfully.',
     'data' => [
-        'document_types' => array_map(static fn (string $value): array => ['value' => $value, 'label' => $value], DYNABASE_DOCUMENT_TYPES),
+        'document_types' => array_map(static fn (string $value): array => ['value' => $value, 'label' => $value], documentTypes($conn)),
         'relationship_types' => [
             ['value' => 'general', 'label' => 'General library document'],
             ['value' => 'tender', 'label' => 'Tender / project'],

@@ -33,6 +33,7 @@ function appSettingDefinitions(): array
         'week_starts_on' => ['type' => 'string', 'default' => 'monday'],
         'default_reporting_period' => ['type' => 'string', 'default' => 'all'],
         'default_page_size' => ['type' => 'integer', 'default' => 10],
+        'agreement_expiring_soon_days' => ['type' => 'integer', 'default' => 30],
         'notifications_enabled' => ['type' => 'boolean', 'default' => true],
         'notification_relationship_enabled' => ['type' => 'boolean', 'default' => true],
         'notification_gift_list_enabled' => ['type' => 'boolean', 'default' => true],
@@ -40,6 +41,7 @@ function appSettingDefinitions(): array
         'notification_document_enabled' => ['type' => 'boolean', 'default' => true],
         'notification_survey_enabled' => ['type' => 'boolean', 'default' => true],
         'notification_access_enabled' => ['type' => 'boolean', 'default' => true],
+        'document_types' => ['type' => 'json', 'default' => ['Profile', 'Presentation', 'Tender']],
     ];
 }
 

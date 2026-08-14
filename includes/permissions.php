@@ -48,6 +48,16 @@ function dynabasePermissionCatalog(): array
             ['key' => 'documents.delete', 'label' => 'Delete documents', 'description' => 'Remove protected documents.'],
             ['key' => 'documents.export', 'label' => 'Export documents', 'description' => 'Download document registers.'],
         ],
+        'Agreement Register' => [
+            ['key' => 'agreement_register.view', 'label' => 'View Agreement Register', 'description' => 'Open NDA and MOU registers, profiles and insights.'],
+            ['key' => 'agreement_register.create', 'label' => 'Create agreements', 'description' => 'Create NDA and MOU records.'],
+            ['key' => 'agreement_register.edit', 'label' => 'Edit agreements', 'description' => 'Update agreement details and lifecycle status.'],
+            ['key' => 'agreement_register.renew', 'label' => 'Renew agreements', 'description' => 'Create linked agreement renewals.'],
+            ['key' => 'agreement_register.share', 'label' => 'Share agreements externally', 'description' => 'Create and manage client-facing agreement workspaces.'],
+            ['key' => 'agreement_register.reminders', 'label' => 'Manage agreement reminders', 'description' => 'Schedule and send agreement reminders.'],
+            ['key' => 'agreement_register.delete', 'label' => 'Delete agreements', 'description' => 'Remove agreement records from the active register.'],
+            ['key' => 'agreement_register.export', 'label' => 'Export Agreement Register', 'description' => 'Download agreement reports and registers.'],
+        ],
         'Prequalifications' => [
             ['key' => 'prequalifications.view', 'label' => 'View prequalifications', 'description' => 'Open readiness registers and profiles.'],
             ['key' => 'prequalifications.create', 'label' => 'Create prequalifications', 'description' => 'Capture readiness checklists.'],
@@ -144,7 +154,7 @@ function dynabaseAdministrationPermissionKeys(): array
 
 function dynabasePmsRelationshipPermissionKeys(): array
 {
-    return dynabasePermissionKeysForSections(['Clients', 'Key Persons', 'Gift Lists']);
+    return dynabasePermissionKeysForSections(['Clients', 'Key Persons', 'Gift Lists', 'Agreement Register']);
 }
 
 function dynabasePermissionDependencies(): array
@@ -176,6 +186,14 @@ function dynabasePermissionDependencies(): array
         'documents.share' => ['documents.view'],
         'documents.delete' => ['documents.view'],
         'documents.export' => ['documents.view'],
+
+        'agreement_register.create' => ['agreement_register.view'],
+        'agreement_register.edit' => ['agreement_register.view'],
+        'agreement_register.renew' => ['agreement_register.view'],
+        'agreement_register.share' => ['agreement_register.view'],
+        'agreement_register.reminders' => ['agreement_register.view'],
+        'agreement_register.delete' => ['agreement_register.view'],
+        'agreement_register.export' => ['agreement_register.view'],
 
         'prequalifications.create' => ['prequalifications.view'],
         'prequalifications.edit' => ['prequalifications.view'],
@@ -289,6 +307,7 @@ function defaultPermissionsForRole(string $role): array
         'clients.view', 'clients.create', 'clients.edit', 'clients.export',
         'keypersons.view', 'keypersons.create', 'keypersons.edit', 'keypersons.export',
         'gift_lists.view', 'gift_lists.create', 'gift_lists.edit', 'gift_lists.export',
+        'agreement_register.view', 'agreement_register.create', 'agreement_register.edit', 'agreement_register.export',
     ];
     $pmsUserAdministration = ['users.view', 'users.invite', 'users.edit', 'users.status', 'users.reset'];
 

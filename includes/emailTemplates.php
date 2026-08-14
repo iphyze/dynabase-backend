@@ -57,6 +57,15 @@ function dynabaseEmailTemplateCatalog(): array
             'icon' => 'badge-check',
             'variables' => ['filled_by', 'project_title', 'reference'],
         ],
+        'agreement_reminder' => [
+            'key' => 'agreement_reminder',
+            'name' => 'Agreement reminder',
+            'category' => 'Agreement Register',
+            'audience' => 'Configured agreement reminder recipients',
+            'description' => 'Reminds selected recipients about an NDA or MOU that needs attention.',
+            'icon' => 'bell-ring',
+            'variables' => ['document_ref_no', 'document_ref_type', 'client_company', 'project_subject', 'status', 'effective_date', 'expiry_date', 'reminder_date', 'purpose', 'agreement_url'],
+        ],
     ];
 }
 
@@ -94,6 +103,18 @@ function dynabaseEmailTemplateSampleData(string $key): array
             'filled_by' => 'Amina Yusuf',
             'project_title' => 'Integrated Power Infrastructure Upgrade',
             'reference' => 'CSR-2026-00418',
+        ],
+        'agreement_reminder' => [
+            'document_ref_no' => 'NDA-2026-001',
+            'document_ref_type' => 'NDA',
+            'client_company' => 'Northstar Energy Services',
+            'project_subject' => 'Proposed Infrastructure Partnership',
+            'status' => 'Awaiting Client Signature',
+            'effective_date' => date('Y-m-d', strtotime('+5 days')),
+            'expiry_date' => date('Y-m-d', strtotime('+1 year')),
+            'reminder_date' => date('Y-m-d'),
+            'purpose' => 'Confidentiality coverage for the proposed partnership discussions.',
+            'agreement_url' => $frontend . '/agreement-register/1',
         ],
         default => [],
     };
@@ -306,6 +327,39 @@ function dynabaseRenderEmailTemplate(string $key, array $data = []): array
             'footer_note' => 'Please keep the submission reference above for your records.',
             'accent' => '#2e8b72',
             'accent_deep' => '#1b5f50',
+        ]);
+    } elseif ($key === 'agreement_reminder') {
+        $reference = dynabaseEmailValue($data, 'document_ref_no');
+        $type = dynabaseEmailValue($data, 'document_ref_type');
+        $company = dynabaseEmailValue($data, 'client_company', 'Not recorded');
+        $subjectName = dynabaseEmailValue($data, 'project_subject', 'Not recorded');
+        $status = dynabaseEmailValue($data, 'status', 'Not recorded');
+        $effectiveDate = dynabaseEmailValue($data, 'effective_date', 'Not recorded');
+        $expiryDate = dynabaseEmailValue($data, 'expiry_date', 'Not recorded');
+        $reminderDate = dynabaseEmailValue($data, 'reminder_date', 'Not recorded');
+        $purpose = dynabaseEmailValue($data, 'purpose', 'Not recorded');
+        $agreementUrl = dynabaseEmailValue($data, 'agreement_url', rtrim(envString('FRONTEND_URL', 'http://localhost:5173'), '/') . '/agreement-register');
+        $subject = 'Agreement reminder — ' . $reference . ' | ' . $company;
+        $html = dynabaseEmailLayout([
+            'eyebrow' => 'AGREEMENT REMINDER',
+            'title' => $reference . ' needs attention',
+            'preheader' => 'Reminder for ' . $type . ' agreement ' . $reference . '.',
+            'badge' => $type !== '' ? $type : 'AGREEMENT',
+            'intro_html' => '<p style="margin:0">This is an automated Dynabase reminder for <strong style="color:#173047">' . dynabaseEmailEscape($reference) . '</strong>.</p><p style="margin:14px 0 0">Please review the agreement and take any required next action.</p>',
+            'body_html' => dynabaseEmailInfoRows([
+                    ['label' => 'Client / Company', 'value' => $company],
+                    ['label' => 'Project / Subject', 'value' => $subjectName],
+                    ['label' => 'Status', 'value' => $status],
+                    ['label' => 'Effective Date', 'value' => $effectiveDate],
+                    ['label' => 'Expiry Date', 'value' => $expiryDate],
+                    ['label' => 'Reminder Date', 'value' => $reminderDate],
+                ])
+                . '<div style="margin:18px 0 0;padding:16px 18px;border:1px solid #dce9f2;border-radius:14px;background:#f6fafc"><p style="margin:0;color:#6d8296;font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase">Purpose</p><p style="margin:7px 0 0;color:#23425c;font-size:13px;line-height:1.65">' . dynabaseEmailEscape($purpose) . '</p></div>',
+            'cta_label' => 'Open Agreement Register',
+            'cta_url' => $agreementUrl,
+            'footer_note' => 'This automated reminder was sent to the recipients configured on the Agreement Register record.',
+            'accent' => '#3478c5',
+            'accent_deep' => '#173f66',
         ]);
     }
 

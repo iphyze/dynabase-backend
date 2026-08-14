@@ -17,7 +17,8 @@ if (!in_array($type, dynabaseReportKnownTypes(), true)) {
 dynabaseReportRequireExportAccess($conn, $authUser, $type);
 
 $giftYear = dynabaseReportYearFilter($_GET['year'] ?? 'all');
-$sheets = dynabaseReportWorkbook($conn, $type, $giftYear, $authUser);
+$agreementFilters = $type === 'agreement-register' ? dynabaseReportAgreementFilters($_GET) : [];
+$sheets = dynabaseReportWorkbook($conn, $type, $giftYear, $authUser, $agreementFilters);
 if ($sheets === []) {
     throw new RuntimeException('This report is not available because its module has not been configured yet.', 409);
 }
@@ -25,7 +26,8 @@ if ($sheets === []) {
 $filename = dynabaseReportFilename($type, $giftYear);
 writeAuditLog($conn, $authUser, 'report.exported', 'report', $type, [
     'report_type' => $type,
-    'selected_year' => $giftYear > 0 ? $giftYear : 'all',
+    'selected_year' => $type === 'agreement-register' ? ($agreementFilters['year'] ?: 'all') : ($giftYear > 0 ? $giftYear : 'all'),
+    'filters' => $type === 'agreement-register' ? $agreementFilters : null,
     'filename' => $filename,
     'worksheet_count' => count($sheets),
     'module_view_permission' => dynabaseReportAccessRules()[$type]['view'] ?? null,

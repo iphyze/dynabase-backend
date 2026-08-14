@@ -97,6 +97,7 @@ function notificationRequiredPermission(string $action, ?string $entityType): ?s
         'keyperson' => 'keypersons.view',
         'gift_list' => 'gift_lists.view',
         'document' => 'documents.view',
+        'agreement_register' => 'agreement_register.view',
         'prequalification' => 'prequalifications.view',
         'submission_register', 'submission_register_report' => 'submission_register.view',
         'influence_log' => 'influence_logs.view',
@@ -161,6 +162,7 @@ function notificationVisibilitySql(mysqli $conn, array $authUser, string $alias 
         'gift_lists.view' => ['gift_list'],
         'tenders.view' => ['project'],
         'documents.view' => ['document'],
+        'agreement_register.view' => ['agreement_register'],
         'prequalifications.view' => ['prequalification'],
         'submission_register.view' => ['submission_register', 'submission_register_report'],
         'influence_logs.view' => ['influence_log'],
@@ -298,6 +300,7 @@ function notificationEntityContext(mysqli $conn, ?string $entityType, mixed $ent
         'keyperson' => ['table' => 'keypersons_table', 'name' => 'key_person', 'owner' => 'owner_pms_admin_id', 'path' => '/keypersons/'],
         'gift_list' => ['table' => 'gift_lists', 'name' => 'gift_year', 'owner' => 'owner_pms_admin_id', 'path' => '/gift-lists/'],
         'document' => ['table' => 'document_table', 'name' => 'document_title', 'owner' => null, 'path' => '/documents/'],
+        'agreement_register' => ['table' => 'agreement_registers', 'name' => 'document_ref_no', 'owner' => 'owner_pms_admin_id', 'path' => '/agreement-register/'],
         'prequalification' => ['table' => 'prequalification_table', 'name' => 'prospective_project', 'owner' => 'owner_pms_admin_id', 'path' => '/prequalifications/'],
         'submission_register' => ['table' => 'submission_registers', 'name' => 'project_company_name', 'owner' => 'owner_pms_admin_id', 'path' => '/submission-register/'],
         'influence_log' => ['table' => 'log_table', 'name' => 'key_person', 'owner' => 'owner_pms_admin_id', 'path' => '/influence-logs'],
@@ -369,6 +372,8 @@ function notificationActionDefinition(string $action): ?array
         'document.share_revoked' => ['category' => 'document', 'severity' => 'warning', 'title' => 'Document link revoked', 'verb' => 'revoked a share link for'],
         'document.deleted' => ['category' => 'document', 'severity' => 'warning', 'title' => 'Document deleted', 'verb' => 'deleted'],
         'document.bulk_deleted' => ['category' => 'document', 'severity' => 'warning', 'title' => 'Documents deleted', 'verb' => 'deleted multiple documents from'],
+        'agreement_register.external_details_submitted' => ['category' => 'document', 'severity' => 'info', 'title' => 'Client agreement details received', 'verb' => 'submitted details for'],
+        'agreement_register.external_document_uploaded' => ['category' => 'document', 'severity' => 'success', 'title' => 'Client agreement document received', 'verb' => 'uploaded a document for'],
         'prequalifications.created' => ['category' => 'opportunity', 'severity' => 'success', 'title' => 'Prequalification created', 'verb' => 'created'],
         'prequalifications.updated' => ['category' => 'opportunity', 'severity' => 'info', 'title' => 'Prequalification updated', 'verb' => 'updated'],
         'prequalifications.deleted' => ['category' => 'opportunity', 'severity' => 'warning', 'title' => 'Prequalification deleted', 'verb' => 'deleted'],
@@ -434,7 +439,7 @@ function dispatchNotificationForAudit(
         $message = $actorName . ' ' . $definition['verb'] . ' ' . $recordName . '.';
     }
 
-    $isScopedEntity = in_array($entityType, ['client', 'keyperson', 'gift_list', 'influence_log', 'submission_register', 'user'], true);
+    $isScopedEntity = in_array($entityType, ['client', 'keyperson', 'gift_list', 'influence_log', 'submission_register', 'agreement_register', 'user'], true);
     $recipients = $isScopedEntity
         ? notificationScopedRecipientIds($conn, $context['owner_pms_admin_id'] ?? null)
         : notificationAdminRecipientIds($conn);

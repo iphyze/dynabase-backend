@@ -58,6 +58,7 @@ if ($section === 'workspace') {
     $weekStartsOn = cleanString($payload['week_starts_on'] ?? 'monday');
     $defaultReportingPeriod = cleanString($payload['default_reporting_period'] ?? 'all');
     $defaultPageSize = (int) ($payload['default_page_size'] ?? 10);
+    $agreementExpiringSoonDays = (int) ($payload['agreement_expiring_soon_days'] ?? 30);
 
     if (!in_array($timezone, timezone_identifiers_list(), true)) {
         throw new RuntimeException('Please choose a valid timezone.', 422);
@@ -74,6 +75,9 @@ if ($section === 'workspace') {
     if (!in_array($defaultPageSize, [10, 20, 25, 50], true)) {
         throw new RuntimeException('Please choose a supported default page size.', 422);
     }
+    if ($agreementExpiringSoonDays < 1 || $agreementExpiringSoonDays > 365) {
+        throw new RuntimeException('Agreement expiry warning must be between 1 and 365 days.', 422);
+    }
 
     $validated = [
         'timezone' => $timezone,
@@ -81,6 +85,7 @@ if ($section === 'workspace') {
         'week_starts_on' => $weekStartsOn,
         'default_reporting_period' => $defaultReportingPeriod,
         'default_page_size' => $defaultPageSize,
+        'agreement_expiring_soon_days' => $agreementExpiringSoonDays,
     ];
 } elseif ($section === 'notifications') {
     $keys = [

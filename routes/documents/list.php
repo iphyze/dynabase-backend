@@ -29,7 +29,7 @@ if ($search !== '') {
     array_push($params, $like, $like, $like, $like, $like, $like, $like, $like);
 }
 if ($documentType !== '' && $documentType !== 'all') {
-    $documentType = normaliseDocumentType($documentType);
+    $documentType = normaliseDocumentType($conn, $documentType);
     $where .= ' AND d.document_type = ?';
     $types .= 's';
     $params[] = $documentType;
@@ -134,6 +134,10 @@ jsonResponse([
             'total_bytes' => (int) ($summary['total_bytes'] ?? 0),
             'recently_updated' => (int) ($summary['recently_updated'] ?? 0),
         ],
+        'available_types' => array_map(static fn (string $value): array => [
+            'value' => $value,
+            'label' => $value,
+        ], documentTypes($conn)),
         'available_categories' => array_map(static fn (array $row): array => [
             'value' => $row['value'],
             'label' => $row['value'],

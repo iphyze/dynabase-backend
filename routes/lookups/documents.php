@@ -26,7 +26,7 @@ if ($q !== '') {
     array_push($params, $like, $like, $like, $like, $like);
 }
 if ($documentType !== '') {
-    $documentType = normaliseDocumentType($documentType);
+    $documentType = normaliseDocumentType($conn, $documentType);
     $where .= ' AND document_type = ?';
     $types .= 's';
     $params[] = $documentType;

@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/authorization.php';
 require_once __DIR__ . '/dbHelpers.php';
 require_once __DIR__ . '/ownership.php';
+require_once __DIR__ . '/settings.php';
 
 const DYNABASE_DOCUMENT_TYPES = ['Profile', 'Presentation', 'Tender'];
 const DYNABASE_DOCUMENT_RELATIONSHIPS = ['general', 'tender', 'client', 'keyperson'];
@@ -59,13 +60,62 @@ function documentFileCapabilities(string $extension): array
     ];
 }
 
-function normaliseDocumentType(mixed $value): string
+function documentTypeLabel(mixed $value): string
 {
-    $candidate = ucfirst(strtolower(trim((string) $value)));
-    if (!in_array($candidate, DYNABASE_DOCUMENT_TYPES, true)) {
-        throw new RuntimeException('Please select a valid document type.', 422);
+    return trim((string) preg_replace('/\s+/u', ' ', trim((string) $value)));
+}
+
+function documentTypes(mysqli $conn): array
+{
+    $configured = appSettingValue($conn, 'document_types', DYNABASE_DOCUMENT_TYPES);
+    $configured = is_array($configured) ? $configured : [];
+
+    $sectionTypes = array_column(dbFetchAll(
+        $conn,
+        "SELECT DISTINCT section_type AS value
+         FROM tender_document_sections
+         WHERE TRIM(section_type) <> ''
+         ORDER BY section_type ASC"
+    ), 'value');
+
+    $existingTypes = array_column(dbFetchAll(
+        $conn,
+        "SELECT DISTINCT document_type AS value
+         FROM document_table
+         WHERE TRIM(document_type) <> ''
+         ORDER BY document_type ASC"
+    ), 'value');
+
+    $types = [];
+    $seen = [];
+    foreach (array_merge(DYNABASE_DOCUMENT_TYPES, $configured, $sectionTypes, $existingTypes) as $value) {
+        $label = documentTypeLabel($value);
+        if ($label === '') {
+            continue;
+        }
+
+        $key = strtolower($label);
+        if (isset($seen[$key])) {
+            continue;
+        }
+
+        $seen[$key] = true;
+        $types[] = $label;
     }
-    return $candidate;
+
+    return $types;
+}
+
+function normaliseDocumentType(mysqli $conn, mixed $value): string
+{
+    $candidate = documentTypeLabel($value);
+    foreach (documentTypes($conn) as $documentType) {
+        if (strcasecmp($documentType, $candidate) === 0) {
+            return $documentType;
+        }
+    }
+
+    throw new RuntimeException('Please select a valid document type.', 422);
 }
 
 function normaliseDocumentRelationship(mixed $value): string
@@ -452,7 +502,7 @@ function documentFormPayload(mysqli $conn, array $payload): array
         throw new RuntimeException('Document title must not exceed 255 characters.', 422);
     }
 
-    $documentType = normaliseDocumentType($payload['document_type'] ?? '');
+    $documentType = normaliseDocumentType($conn, $payload['document_type'] ?? '');
     $category = trim((string) ($payload['document_category'] ?? $payload['category'] ?? ''));
     if ($category === '') {
         throw new RuntimeException('Document category is required.', 422);

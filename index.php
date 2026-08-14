@@ -84,6 +84,28 @@ $routes = [
     '/documents/public/unlock' => 'routes/documents/public/unlock.php',
     '/documents/public/file' => 'routes/documents/public/file.php',
 
+    '/agreement-register/options' => 'routes/agreement-register/options.php',
+    '/agreement-register/list' => 'routes/agreement-register/list.php',
+    '/agreement-register/show' => 'routes/agreement-register/show.php',
+    '/agreement-register/create' => 'routes/agreement-register/create.php',
+    '/agreement-register/update' => 'routes/agreement-register/update.php',
+    '/agreement-register/renew' => 'routes/agreement-register/renew.php',
+    '/agreement-register/delete' => 'routes/agreement-register/delete.php',
+    '/agreement-register/bulk-delete' => 'routes/agreement-register/bulkDelete.php',
+    '/agreement-register/bulk-update-status' => 'routes/agreement-register/bulkUpdateStatus.php',
+    '/agreement-register/attach-document' => 'routes/agreement-register/attachDocument.php',
+    '/agreement-register/reminders/history' => 'routes/agreement-register/reminders/history.php',
+    '/agreement-register/reminders/send-now' => 'routes/agreement-register/reminders/sendNow.php',
+    '/agreement-register/shares/list' => 'routes/agreement-register/shares/list.php',
+    '/agreement-register/shares/create' => 'routes/agreement-register/shares/create.php',
+    '/agreement-register/shares/update' => 'routes/agreement-register/shares/update.php',
+    '/agreement-register/shares/revoke' => 'routes/agreement-register/shares/revoke.php',
+    '/agreement-register/public/workspace' => 'routes/agreement-register/public/workspace.php',
+    '/agreement-register/public/unlock' => 'routes/agreement-register/public/unlock.php',
+    '/agreement-register/public/submit' => 'routes/agreement-register/public/submit.php',
+    '/agreement-register/public/file' => 'routes/agreement-register/public/file.php',
+    '/agreement-register/public/upload' => 'routes/agreement-register/public/upload.php',
+
     '/dashboard/overview' => 'routes/dashboard/overview.php',
     '/dashboard/pms' => 'routes/dashboard/pms.php',
 
@@ -99,6 +121,7 @@ $routes = [
     '/settings/update' => 'routes/settings/update.php',
 
     '/reports/overview' => 'routes/reports/overview.php',
+    '/reports/agreement-register' => 'routes/reports/agreementRegister.php',
     '/reports/export' => 'routes/reports/export.php',
 
     '/logs/list' => 'routes/logs/list.php',
@@ -156,6 +179,7 @@ $routes = [
     '/email-templates/send-test' => 'routes/email-templates/sendTest.php',
 
     '/references/client-categories' => 'routes/references/clientCategories.php',
+    '/references/document-taxonomy' => 'routes/references/documentTaxonomy.php',
     '/references/countries' => 'routes/references/countries.php',
     '/references/cities' => 'routes/references/cities.php',
     '/references/project-cities' => 'routes/references/projectCities.php',
@@ -255,6 +279,23 @@ function routePermissionForPath(string $path): string|array|null
         '/documents/delete' => 'documents.delete',
         '/documents/bulk-delete' => 'documents.delete',
 
+        '/agreement-register/options' => 'agreement_register.view',
+        '/agreement-register/list' => 'agreement_register.view',
+        '/agreement-register/show' => 'agreement_register.view',
+        '/agreement-register/create' => 'agreement_register.create',
+        '/agreement-register/update' => 'agreement_register.edit',
+        '/agreement-register/renew' => 'agreement_register.renew',
+        '/agreement-register/delete' => 'agreement_register.delete',
+        '/agreement-register/bulk-delete' => 'agreement_register.delete',
+        '/agreement-register/bulk-update-status' => 'agreement_register.edit',
+        '/agreement-register/attach-document' => ['agreement_register.create', 'agreement_register.edit', 'agreement_register.renew'],
+        '/agreement-register/reminders/history' => 'agreement_register.reminders',
+        '/agreement-register/reminders/send-now' => 'agreement_register.reminders',
+        '/agreement-register/shares/list' => 'agreement_register.share',
+        '/agreement-register/shares/create' => 'agreement_register.share',
+        '/agreement-register/shares/update' => 'agreement_register.share',
+        '/agreement-register/shares/revoke' => 'agreement_register.share',
+
         '/prequalifications/list' => 'prequalifications.view',
         '/prequalifications/show' => 'prequalifications.view',
         '/prequalifications/create' => 'prequalifications.create',
@@ -311,6 +352,7 @@ function routePermissionForPath(string $path): string|array|null
         '/projects/export' => 'tenders.export',
 
         '/reports/overview' => 'reports.view',
+        '/reports/agreement-register' => 'reports.view',
         '/reports/export' => 'reports.export',
         '/email-templates/list' => 'email_templates.view',
         '/email-templates/preview' => 'email_templates.view',
@@ -333,6 +375,9 @@ function routePermissionForPath(string $path): string|array|null
             'influence_logs.view',
             'web_of_influence.view',
             'client_surveys.view',
+            'agreement_register.view',
+            'agreement_register.create',
+            'agreement_register.edit',
         ],
         '/lookups/keypersons' => [
             'keypersons.view',
@@ -341,6 +386,9 @@ function routePermissionForPath(string $path): string|array|null
             'prequalifications.view',
             'influence_logs.view',
             'web_of_influence.view',
+            'agreement_register.view',
+            'agreement_register.create',
+            'agreement_register.edit',
         ],
         '/lookups/projects' => [
             'tenders.view',
@@ -374,6 +422,9 @@ function routePermissionForPath(string $path): string|array|null
             'prequalifications.view',
             'influence_logs.view',
             'web_of_influence.view',
+            'agreement_register.view',
+            'agreement_register.create',
+            'agreement_register.edit',
         ],
 
         // Static/reference options are intentionally absent from this permission map. Their
