@@ -85,6 +85,8 @@ $routes = [
     '/documents/public/share' => 'routes/documents/public/share.php',
     '/documents/public/unlock' => 'routes/documents/public/unlock.php',
     '/documents/public/file' => 'routes/documents/public/file.php',
+    '/documents/public/library' => 'routes/documents/public/library/index.php',
+    '/documents/public/library/file' => 'routes/documents/public/library/file.php',
 
     '/agreement-register/options' => 'routes/agreement-register/options.php',
     '/agreement-register/list' => 'routes/agreement-register/list.php',

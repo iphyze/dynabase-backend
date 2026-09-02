@@ -650,6 +650,131 @@ function documentResponsePayload(array $row): array
     ];
 }
 
+
+/**
+ * Public Document Library eligibility is deliberately stricter than the
+ * authenticated Documents workspace. Agreement uploads are currently NDA/MOU
+ * records, so Agreement-type files and anything linked to the Agreement
+ * Register are never exposed by the public library.
+ */
+function publicDocumentLibraryEligibilitySql(string $alias = 'd'): string
+{
+    if (!preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $alias)) {
+        throw new InvalidArgumentException('Invalid document query alias.');
+    }
+
+    return "{$alias}.status = 'active'
+        AND UPPER(TRIM({$alias}.document_type)) NOT IN ('NDA', 'MOU', 'AGREEMENT')
+        AND UPPER(TRIM({$alias}.document_category)) NOT IN ('NDA', 'MOU', 'NDA AGREEMENT', 'MOU AGREEMENT')
+        AND NOT EXISTS (
+            SELECT 1
+            FROM agreement_registers public_agreement
+            WHERE public_agreement.linked_document_id = {$alias}.id
+              AND public_agreement.document_ref_type IN ('NDA', 'MOU')
+        )";
+}
+
+function publicDocumentLibraryPayload(array $row): array
+{
+    $originalName = trim((string) ($row['public_original_name'] ?? $row['original_name'] ?? ''));
+    if ($originalName === '') {
+        $originalName = basename((string) ($row['document'] ?? ''));
+    }
+
+    $extension = strtolower(trim((string) ($row['public_file_extension'] ?? $row['file_extension'] ?? pathinfo($originalName, PATHINFO_EXTENSION))));
+    $capabilities = documentFileCapabilities($extension);
+
+    return [
+        'id' => (int) ($row['id'] ?? 0),
+        'division' => trim((string) ($row['document_category'] ?? '')),
+        'title' => trim((string) ($row['document_title'] ?? '')),
+        'document_type' => trim((string) ($row['document_type'] ?? '')),
+        'reference_code' => trim((string) ($row['presentation_code'] ?? '')),
+        'description' => trim((string) ($row['description'] ?? '')),
+        'updated_content' => trim((string) ($row['updated_content'] ?? '')),
+        'original_name' => $originalName,
+        'file_extension' => $extension,
+        'file_size' => (int) ($row['public_file_size'] ?? $row['file_size'] ?? 0),
+        'mime_type' => (string) ($row['public_mime_type'] ?? $row['mime_type'] ?? 'application/octet-stream'),
+        'current_revision_id' => isset($row['current_revision_id']) && $row['current_revision_id'] !== null
+            ? (int) $row['current_revision_id']
+            : null,
+        'current_revision_code' => trim((string) ($row['current_revision_code'] ?? '')) ?: null,
+        'previewable' => (bool) $capabilities['previewable'],
+        'download_only' => (bool) $capabilities['download_only'],
+        'file_kind' => (string) $capabilities['file_kind'],
+        'delivery_mode' => (string) $capabilities['delivery_mode'],
+        'file_available' => (bool) ($row['public_file_available'] ?? true),
+        'created_at' => $row['created_at'] ?? null,
+        'updated_at' => $row['updated_at'] ?? null,
+    ];
+}
+
+function assertPublicDocumentLibraryDocument(mysqli $conn, int $documentId): array
+{
+    if ($documentId <= 0) {
+        throw new RuntimeException('Document ID is required.', 422);
+    }
+
+    $eligibility = publicDocumentLibraryEligibilitySql('d');
+    $document = dbFetchOne(
+        $conn,
+        "SELECT d.*,
+                cr.id AS current_revision_id,
+                cr.revision_code AS current_revision_code,
+                cr.original_name AS public_original_name,
+                cr.stored_name AS public_stored_name,
+                cr.storage_path AS public_storage_path,
+                cr.mime_type AS public_mime_type,
+                cr.file_extension AS public_file_extension,
+                cr.file_size AS public_file_size
+         FROM document_table d
+         LEFT JOIN document_revisions cr
+           ON cr.document_id = d.id
+          AND cr.record_status = 'active'
+          AND cr.is_current = 1
+         WHERE d.id = ? AND {$eligibility}
+         ORDER BY cr.id DESC
+         LIMIT 1",
+        'i',
+        [$documentId]
+    );
+
+    if (!$document) {
+        throw new RuntimeException('Document not found.', 404);
+    }
+
+    return $document;
+}
+
+function publicDocumentLibraryFileSource(array $document): array
+{
+    $revisionId = (int) ($document['current_revision_id'] ?? 0);
+    if ($revisionId > 0) {
+        return [
+            'id' => $revisionId,
+            'document_id' => (int) $document['id'],
+            'original_name' => $document['public_original_name'] ?? $document['original_name'] ?? '',
+            'stored_name' => $document['public_stored_name'] ?? $document['document'] ?? '',
+            'storage_path' => $document['public_storage_path'] ?? $document['storage_path'] ?? '',
+            'mime_type' => $document['public_mime_type'] ?? $document['mime_type'] ?? 'application/octet-stream',
+            'file_extension' => $document['public_file_extension'] ?? $document['file_extension'] ?? '',
+            'file_size' => (int) ($document['public_file_size'] ?? $document['file_size'] ?? 0),
+        ];
+    }
+
+    return [
+        'id' => null,
+        'document_id' => (int) $document['id'],
+        'original_name' => $document['original_name'] ?? '',
+        'document' => $document['document'] ?? '',
+        'storage_path' => $document['storage_path'] ?? '',
+        'mime_type' => $document['mime_type'] ?? 'application/octet-stream',
+        'file_extension' => $document['file_extension'] ?? '',
+        'file_size' => (int) ($document['file_size'] ?? 0),
+    ];
+}
+
 function parseDocumentIds(array $payload): array
 {
     $raw = $payload['ids'] ?? [];
