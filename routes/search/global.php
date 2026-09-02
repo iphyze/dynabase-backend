@@ -84,7 +84,7 @@ $pushGroup('clients', 'Clients', array_map(static fn (array $row): array => $row
 }
 
 if ($canSearch('keypersons.view')) {
-[$keypersonScopeSql, $keypersonScopeParams] = buildPmsOwnershipWhereClause($authUser, 'k');
+[$keypersonScopeSql, $keypersonScopeParams] = scopedKeypersonWhere($authUser, 'k');
 $keypersonTypes = 'ssss';
 $keypersonParams = [$like, $like, $like, $like];
 foreach ($keypersonScopeParams as $scopeParam) {
@@ -133,8 +133,11 @@ $giftRows = dbFetchAll(
             CONCAT(COUNT(items.id), ' recipient', CASE WHEN COUNT(items.id) = 1 THEN '' ELSE 's' END) AS meta
      FROM gift_lists gl
      INNER JOIN users owner ON owner.id = gl.owner_pms_admin_id
-     LEFT JOIN gift_list_items items ON items.gift_list_id = gl.id
-     WHERE (
+     LEFT JOIN gift_list_items items ON items.gift_list_id = gl.id AND items.gift_decision = 'selected'
+     WHERE EXISTS (
+        SELECT 1 FROM gift_list_items visible_items
+        WHERE visible_items.gift_list_id = gl.id AND visible_items.gift_decision = 'selected'
+     ) AND (
         CAST(gl.gift_year AS CHAR) LIKE ?
         OR owner.first_name LIKE ?
         OR owner.last_name LIKE ?
@@ -142,6 +145,7 @@ $giftRows = dbFetchAll(
         OR EXISTS (
             SELECT 1 FROM gift_list_items search_items
             WHERE search_items.gift_list_id = gl.id
+              AND search_items.gift_decision = 'selected'
               AND (search_items.keyperson_name_snapshot LIKE ? OR search_items.client_name_snapshot LIKE ?)
         )
      ){$giftWhere}

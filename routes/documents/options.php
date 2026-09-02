@@ -44,17 +44,20 @@ $clients = dbFetchAll(
      ORDER BY clients_name ASC
      LIMIT 500"
 );
+[$keypersonScopeSql, $keypersonScopeTypes, $keypersonScopeParams] = appendKeypersonScopedWhere($authUser, 'k');
 $keypersons = dbFetchAll(
     $conn,
-    "SELECT id AS value,
-            CASE WHEN COALESCE(NULLIF(TRIM(clients_name), ''), '') <> ''
-                 THEN CONCAT(key_person, ' — ', clients_name)
-                 ELSE key_person END AS label,
-            key_person, clients_name
-     FROM keypersons_table
-     WHERE status = 'active'
-     ORDER BY key_person ASC
-     LIMIT 500"
+    "SELECT k.id AS value,
+            CASE WHEN COALESCE(NULLIF(TRIM(k.clients_name), ''), '') <> ''
+                 THEN CONCAT(k.key_person, ' — ', k.clients_name)
+                 ELSE k.key_person END AS label,
+            k.key_person, k.clients_name
+     FROM keypersons_table k
+     WHERE k.status = 'active'{$keypersonScopeSql}
+     ORDER BY k.key_person ASC
+     LIMIT 500",
+    $keypersonScopeTypes,
+    $keypersonScopeParams
 );
 
 jsonResponse([

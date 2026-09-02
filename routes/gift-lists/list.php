@@ -23,7 +23,7 @@ if ($giftRate !== '' && !in_array($giftRate, DYNABASE_GIFT_RATES, true)) {
     throw new RuntimeException('Invalid gift-rate filter.', 422);
 }
 
-$where = ' WHERE EXISTS (SELECT 1 FROM gift_list_items has_items WHERE has_items.gift_list_id = gl.id)';
+$where = " WHERE EXISTS (SELECT 1 FROM gift_list_items has_items WHERE has_items.gift_list_id = gl.id AND has_items.gift_decision = 'selected')";
 $types = '';
 $params = [];
 
@@ -52,12 +52,12 @@ if ($giftYear > 0) {
     $params[] = $giftYear;
 }
 if ($clientId > 0) {
-    $where .= ' AND EXISTS (SELECT 1 FROM gift_list_items client_filter WHERE client_filter.gift_list_id = gl.id AND client_filter.client_id = ?)';
+    $where .= " AND EXISTS (SELECT 1 FROM gift_list_items client_filter WHERE client_filter.gift_list_id = gl.id AND client_filter.client_id = ? AND client_filter.gift_decision = 'selected')";
     $types .= 'i';
     $params[] = $clientId;
 }
 if ($giftRate !== '') {
-    $where .= ' AND EXISTS (SELECT 1 FROM gift_list_items rate_filter WHERE rate_filter.gift_list_id = gl.id AND rate_filter.gift_rate = ?)';
+    $where .= " AND EXISTS (SELECT 1 FROM gift_list_items rate_filter WHERE rate_filter.gift_list_id = gl.id AND rate_filter.gift_rate = ? AND rate_filter.gift_decision = 'selected')";
     $types .= 's';
     $params[] = $giftRate;
 }
@@ -69,6 +69,7 @@ if ($q !== '') {
         OR EXISTS (
             SELECT 1 FROM gift_list_items search_items
             WHERE search_items.gift_list_id = gl.id
+              AND search_items.gift_decision = 'selected'
               AND (search_items.keyperson_name_snapshot LIKE ? OR search_items.client_name_snapshot LIKE ?)
         )
     )";
@@ -99,7 +100,7 @@ $rows = dbFetchAll(
             GROUP_CONCAT(DISTINCT items.gift_rate ORDER BY FIELD(items.gift_rate, 'A+','A','B+','B','C+','C','D') SEPARATOR ',') AS rate_summary,
             MAX(items.updated_at) AS last_item_updated_at
      {$baseFrom}
-     INNER JOIN gift_list_items items ON items.gift_list_id = gl.id
+     INNER JOIN gift_list_items items ON items.gift_list_id = gl.id AND items.gift_decision = 'selected'
      {$where}
      GROUP BY gl.id
      ORDER BY {$orderBy} {$order}, gl.id DESC
@@ -115,7 +116,7 @@ $summary = dbFetchOne(
             COUNT(DISTINCT CONCAT(gl.id, ':', items.client_id)) AS clients,
             COUNT(DISTINCT gl.owner_pms_admin_id) AS owners
      {$baseFrom}
-     INNER JOIN gift_list_items items ON items.gift_list_id = gl.id
+     INNER JOIN gift_list_items items ON items.gift_list_id = gl.id AND items.gift_decision = 'selected'
      {$where}",
     $types,
     $params

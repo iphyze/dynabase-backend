@@ -11,8 +11,8 @@ $payload = readJsonBody();
 $giftYear = validateGiftYear($payload['gift_year'] ?? date('Y'));
 $requestedOwner = isset($payload['owner_pms_admin_id']) ? (int) $payload['owner_pms_admin_id'] : null;
 $ownerPmsAdminId = resolveGiftOwnerPmsAdminId($conn, $authUser, $requestedOwner);
-$decision = validateGiftDecision($payload['gift_decision'] ?? 'pending');
-$rate = validateGiftRate($payload['gift_rate'] ?? null, $decision);
+$decision = validateGiftDecision($payload['gift_decision'] ?? 'selected');
+$rate = $decision === 'selected' ? validateGiftRate($payload['gift_rate'] ?? null) : null;
 $ids = $payload['keyperson_ids'] ?? $payload['ids'] ?? [];
 if (!is_array($ids)) {
     throw new RuntimeException('Please select at least one key person.', 422);
@@ -23,12 +23,13 @@ if ($ids === []) {
 }
 
 $actorId = (int) $authUser['id'];
-$giftListId = ensureGiftList($conn, $giftYear, $ownerPmsAdminId, $actorId);
+$giftListId = 0;
 $processed = 0;
 $conn->begin_transaction();
 try {
+    $giftListId = ensureGiftList($conn, $giftYear, $ownerPmsAdminId, $actorId);
     foreach ($ids as $id) {
-        $keyperson = assertGiftKeypersonOwnedBy($conn, $id, $ownerPmsAdminId);
+        $keyperson = fetchGiftListKeyperson($conn, $id);
         upsertGiftListItem($conn, $giftListId, $keyperson, $decision, $rate, '', $actorId);
         $processed++;
     }

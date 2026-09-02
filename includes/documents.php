@@ -431,7 +431,7 @@ function removeManagedDocumentFile(?string $path): void
     }
 }
 
-function documentRelationshipSelection(mysqli $conn, string $relationshipType, array $payload): array
+function documentRelationshipSelection(mysqli $conn, array $authUser, string $relationshipType, array $payload): array
 {
     $projectCode = null;
     $clientId = null;
@@ -470,14 +470,13 @@ function documentRelationshipSelection(mysqli $conn, string $relationshipType, a
         if ($keypersonId <= 0) {
             throw new RuntimeException('Please select the related key person.', 422);
         }
-        $keyperson = dbFetchOne(
-            $conn,
-            "SELECT id, key_person, clients_name FROM keypersons_table WHERE id = ? AND status = 'active' LIMIT 1",
-            'i',
-            [$keypersonId]
-        );
-        if (!$keyperson) {
-            throw new RuntimeException('The selected key person is not available.', 422);
+        try {
+            $keyperson = assertKeypersonAccessible($conn, $authUser, $keypersonId);
+        } catch (RuntimeException $exception) {
+            if ((int) $exception->getCode() === 404) {
+                throw new RuntimeException('The selected key person is not available.', 422);
+            }
+            throw $exception;
         }
         $relationshipLabel = trim((string) $keyperson['clients_name']) !== ''
             ? (string) $keyperson['key_person'] . ' — ' . (string) $keyperson['clients_name']
@@ -492,7 +491,7 @@ function documentRelationshipSelection(mysqli $conn, string $relationshipType, a
     ];
 }
 
-function documentFormPayload(mysqli $conn, array $payload): array
+function documentFormPayload(mysqli $conn, array $authUser, array $payload): array
 {
     $title = trim((string) ($payload['document_title'] ?? $payload['title'] ?? ''));
     if ($title === '') {
@@ -513,7 +512,7 @@ function documentFormPayload(mysqli $conn, array $payload): array
     assertDocumentCategoryAvailable($conn, $category, $documentType);
 
     $relationshipType = normaliseDocumentRelationship($payload['relationship_type'] ?? 'general');
-    $relationship = documentRelationshipSelection($conn, $relationshipType, $payload);
+    $relationship = documentRelationshipSelection($conn, $authUser, $relationshipType, $payload);
 
     $referenceCode = trim((string) ($payload['presentation_code'] ?? $payload['reference_code'] ?? ''));
     $revisionNotes = trim((string) ($payload['updated_content'] ?? $payload['revision_notes'] ?? ''));

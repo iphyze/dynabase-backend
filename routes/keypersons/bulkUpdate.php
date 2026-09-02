@@ -36,13 +36,13 @@ if (in_array($action, ['gift_yes', 'gift_no'], true)) {
 $placeholders = implode(',', array_fill(0, count($ids), '?'));
 $types = str_repeat('i', count($ids));
 $params = $ids;
-[$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'k');
+[$scopeSql, $scopeTypes, $scopeParams] = appendKeypersonScopedWhere($authUser, 'k');
 $types .= $scopeTypes;
 $params = array_merge($params, $scopeParams);
 
 $accessibleRows = dbFetchAll(
     $conn,
-    "SELECT k.id, k.clients_id, k.clients_name, k.key_person, k.owner_pms_admin_id
+    "SELECT k.id, k.clients_id, k.clients_name, k.key_person
      FROM keypersons_table k
      WHERE k.id IN ({$placeholders}){$scopeSql}",
     $types,
@@ -73,20 +73,15 @@ if (in_array($action, ['activate', 'deactivate'], true)) {
 } else {
     $giftYear = validateGiftYear($payload['gift_year'] ?? date('Y'));
     $decision = $action === 'gift_yes' ? 'selected' : 'not_selected';
-    $rate = validateGiftRate($payload['gift_type'] ?? null, $decision);
-    $listIds = [];
+    $rate = $decision === 'selected' ? validateGiftRate($payload['gift_type'] ?? null) : null;
+    $requestedOwnerId = isset($payload['owner_pms_admin_id']) ? (int) $payload['owner_pms_admin_id'] : null;
+    $giftOwnerPmsAdminId = resolveGiftOwnerPmsAdminId($conn, $authUser, $requestedOwnerId);
 
     $conn->begin_transaction();
     try {
+        $giftListId = ensureGiftList($conn, $giftYear, $giftOwnerPmsAdminId, $actorId);
         foreach ($accessibleRows as $keyperson) {
-            $ownerId = (int) ($keyperson['owner_pms_admin_id'] ?? 0);
-            if ($ownerId <= 0) {
-                throw new RuntimeException('One or more selected key persons do not yet have a PMS owner.', 422);
-            }
-            if (!isset($listIds[$ownerId])) {
-                $listIds[$ownerId] = ensureGiftList($conn, $giftYear, $ownerId, $actorId);
-            }
-            upsertGiftListItem($conn, $listIds[$ownerId], $keyperson, $decision, $rate, '', $actorId);
+            upsertGiftListItem($conn, $giftListId, $keyperson, $decision, $rate, '', $actorId);
         }
         $conn->commit();
     } catch (Throwable $exception) {

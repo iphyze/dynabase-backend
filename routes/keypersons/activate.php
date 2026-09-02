@@ -16,9 +16,9 @@ $keyperson = assertKeypersonAccessible($conn, $authUser, $id, true);
 $actorEmail = actorEmail($authUser);
 $actorId = (int) $authUser['id'];
 
-[$recordScopeSql, $recordTypes, $recordParams] = appendScopedWhere(
+[$recordScopeSql, $recordTypes, $recordParams] = appendKeypersonScopedWhere(
     $authUser,
-    '',
+    'keypersons_table',
     'sii',
     [$actorEmail, $actorId, $id]
 );

@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/ownership.php';
 require_once __DIR__ . '/../../includes/lookup.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
@@ -16,6 +17,35 @@ $limit = lookupLimit(100, 100);
 $offset = lookupOffset();
 $includeOther = cleanString($_GET['include_other'] ?? '') === '1';
 $ownerPmsAdminId = (int) ($_GET['owner_pms_admin_id'] ?? 0);
+$referenceScope = cleanString($_GET['reference_scope'] ?? '');
+$role = userRole($authUser);
+$fixedOwnerPmsAdminId = resolveOwnerPmsAdminId($authUser);
+$canViewFullOwnerDirectory = userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])
+    || ($role === DYNABASE_ROLE_USER
+        && (userHasPermission($conn, $authUser, 'clients.create')
+            || userHasPermission($conn, $authUser, 'clients.edit')));
+
+if ($referenceScope !== '' && !in_array($referenceScope, ['keypersons', 'gift_lists'], true)) {
+    throw new RuntimeException('Invalid client reference scope.', 422);
+}
+
+$isSharedReference = in_array($referenceScope, ['keypersons', 'gift_lists'], true);
+if ($isSharedReference) {
+    $canUseReference = $referenceScope === 'keypersons'
+        ? (userHasPermission($conn, $authUser, 'keypersons.create') || userHasPermission($conn, $authUser, 'keypersons.edit'))
+        : (userHasPermission($conn, $authUser, 'gift_lists.create') || userHasPermission($conn, $authUser, 'gift_lists.edit'));
+    if (!$canUseReference) {
+        throw new RuntimeException('You are not authorised to use the shared client reference lookup.', 403);
+    }
+
+    if ($status !== '' && $status !== 'active') {
+        throw new RuntimeException('Shared client references only include active clients.', 422);
+    }
+
+    if ($ownerPmsAdminId > 0) {
+        throw new RuntimeException('PMS ownership filters are not available in shared client references.', 422);
+    }
+}
 
 $where = ' WHERE 1 = 1';
 $types = '';
@@ -43,16 +73,26 @@ if ($category !== '') {
     $params[] = $category;
 }
 
-if ($ownerPmsAdminId > 0 && isGlobalDataUser($authUser)) {
-    $where .= ' AND c.owner_pms_admin_id = ?';
-    $types .= 'i';
-    $params[] = $ownerPmsAdminId;
+if (!$isSharedReference && $ownerPmsAdminId > 0) {
+    if ($canViewFullOwnerDirectory) {
+        $where .= ' AND c.owner_pms_admin_id = ?';
+        $types .= 'i';
+        $params[] = $ownerPmsAdminId;
+    } elseif ($fixedOwnerPmsAdminId !== null && $fixedOwnerPmsAdminId > 0) {
+        if ($ownerPmsAdminId !== $fixedOwnerPmsAdminId) {
+            throw new RuntimeException('You are not authorised to filter clients by another PMS Admin.', 403);
+        }
+    } else {
+        throw new RuntimeException('You are not authorised to filter clients by PMS ownership.', 403);
+    }
 }
 
-[$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'c');
-$where .= $scopeSql;
-$types .= $scopeTypes;
-$params = array_merge($params, $scopeParams);
+if (!$isSharedReference) {
+    [$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'c');
+    $where .= $scopeSql;
+    $types .= $scopeTypes;
+    $params = array_merge($params, $scopeParams);
+}
 
 $total = dbScalarInt($conn, "SELECT COUNT(*) AS total FROM clients_table c{$where}", $types, $params);
 $rows = dbFetchAll(
@@ -67,16 +107,31 @@ $rows = dbFetchAll(
     array_merge($params, [$limit, $offset])
 );
 
-$data = array_map(static fn (array $row): array => optionRow((int) $row['id'], (string) $row['clients_name'], [
-    'id' => (int) $row['id'],
-    'clients_name' => $row['clients_name'],
-    'clients_email' => $row['clients_email'],
-    'clients_website' => $row['clients_website'],
-    'clients_hq_location' => $row['clients_hq_location'],
-    'clients_category' => $row['clients_category'],
-    'clients_address' => $row['clients_address'],
-    'owner_pms_admin_id' => $row['owner_pms_admin_id'] !== null ? (int) $row['owner_pms_admin_id'] : null,
-]), $rows);
+$data = array_map(static function (array $row) use (
+    $isSharedReference,
+    $canViewFullOwnerDirectory,
+    $fixedOwnerPmsAdminId
+): array {
+    $meta = [
+        'id' => (int) $row['id'],
+        'clients_name' => $row['clients_name'],
+        'clients_email' => $row['clients_email'],
+        'clients_website' => $row['clients_website'],
+        'clients_hq_location' => $row['clients_hq_location'],
+        'clients_category' => $row['clients_category'],
+        'clients_address' => $row['clients_address'],
+    ];
+
+    // Shared references deliberately do not expose PMS ownership information.
+    // Normal lookups expose ownership only to users whose role/scope requires it.
+    if (!$isSharedReference && $canViewFullOwnerDirectory) {
+        $meta['owner_pms_admin_id'] = $row['owner_pms_admin_id'] !== null ? (int) $row['owner_pms_admin_id'] : null;
+    } elseif (!$isSharedReference && $fixedOwnerPmsAdminId !== null && $fixedOwnerPmsAdminId > 0) {
+        $meta['owner_pms_admin_id'] = $fixedOwnerPmsAdminId;
+    }
+
+    return optionRow((int) $row['id'], (string) $row['clients_name'], $meta);
+}, $rows);
 
 if ($includeOther && $offset === 0) {
     $otherLabel = $category !== '' ? 'Other ' . $category : 'Other Client';

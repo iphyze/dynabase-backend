@@ -17,7 +17,7 @@ if ($giftRate !== '' && !in_array($giftRate, DYNABASE_GIFT_RATES, true)) {
     throw new RuntimeException('Invalid gift-rate filter.', 422);
 }
 
-$where = ' WHERE 1 = 1';
+$where = " WHERE items.gift_decision = 'selected'";
 $types = '';
 $params = [];
 $fixedOwnerId = giftListFixedOwnerId($authUser);

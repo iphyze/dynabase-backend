@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/authorization.php';
 require_once __DIR__ . '/dbHelpers.php';
+require_once __DIR__ . '/keypersons.php';
 
 function isGlobalDataUser(array $authUser): bool
 {
@@ -37,17 +38,20 @@ function resolveAssignableOwnerPmsAdminId(mysqli $conn, array $authUser, ?int $r
 
 function resolveClientOwnerPmsAdminId(mysqli $conn, array $authUser, ?int $requestedOwnerPmsAdminId = null): int
 {
-    $ownerPmsAdminId = $requestedOwnerPmsAdminId !== null && $requestedOwnerPmsAdminId > 0
-        ? $requestedOwnerPmsAdminId
-        : null;
+    $role = userRole($authUser);
 
-    if ($ownerPmsAdminId === null && userActsAsPmsAdmin($authUser)) {
+    // PMS-scoped users cannot transfer ownership by posting another PMS Admin ID.
+    // Their ownership scope is fixed server-side and the lookup endpoint mirrors it.
+    if (userActsAsPmsAdmin($authUser)
+        && !userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
         $ownerPmsAdminId = (int) ($authUser['id'] ?? 0);
-    }
-
-    if ($ownerPmsAdminId === null && userRole($authUser) === DYNABASE_ROLE_PMS_USER) {
+    } elseif ($role === DYNABASE_ROLE_PMS_USER) {
         $parentPmsAdminId = (int) ($authUser['parent_pms_admin_id'] ?? 0);
         $ownerPmsAdminId = $parentPmsAdminId > 0 ? $parentPmsAdminId : null;
+    } else {
+        $ownerPmsAdminId = $requestedOwnerPmsAdminId !== null && $requestedOwnerPmsAdminId > 0
+            ? $requestedOwnerPmsAdminId
+            : null;
     }
 
     if ($ownerPmsAdminId === null || $ownerPmsAdminId <= 0) {
@@ -115,6 +119,34 @@ function ownerDuplicateSql(?int $ownerPmsAdminId, string $alias = ''): array
     return [" AND {$prefix}owner_pms_admin_id IS NULL", '', []];
 }
 
+function scopedKeypersonWhere(array $authUser, string $alias = 'k'): array
+{
+    if (isGlobalDataUser($authUser)) {
+        return ['', []];
+    }
+
+    $ownerPmsAdminId = resolveOwnerPmsAdminId($authUser);
+    if ($ownerPmsAdminId === null || $ownerPmsAdminId <= 0) {
+        return [' AND 1 = 0', []];
+    }
+
+    $prefix = $alias !== '' ? $alias . '.' : '';
+    return [
+        " AND EXISTS (SELECT 1 FROM keyperson_pms_assignments kpa_scope WHERE kpa_scope.keyperson_id = {$prefix}id AND kpa_scope.pms_admin_id = ?)",
+        [$ownerPmsAdminId],
+    ];
+}
+
+function appendKeypersonScopedWhere(array $authUser, string $alias = 'k', string $types = '', array $params = []): array
+{
+    [$scopeSql, $scopeParams] = scopedKeypersonWhere($authUser, $alias);
+    foreach ($scopeParams as $scopeParam) {
+        $types .= 'i';
+        $params[] = $scopeParam;
+    }
+    return [$scopeSql, $types, $params];
+}
+
 function assertClientAccessible(mysqli $conn, array $authUser, int $clientId, bool $includeInactive = false): array
 {
     [$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'c', 'i', [$clientId]);
@@ -136,7 +168,7 @@ function assertClientAccessible(mysqli $conn, array $authUser, int $clientId, bo
 
 function assertKeypersonAccessible(mysqli $conn, array $authUser, int $keypersonId, bool $includeInactive = false): array
 {
-    [$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'k', 'i', [$keypersonId]);
+    [$scopeSql, $scopeTypes, $scopeParams] = appendKeypersonScopedWhere($authUser, 'k', 'i', [$keypersonId]);
     $statusSql = $includeInactive ? '' : " AND k.status = 'active'";
 
     $keyperson = dbFetchOne(

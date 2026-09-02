@@ -52,19 +52,14 @@ try {
             )->close();
 
             if ($action === 'deactivate') {
-                [$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere(
-                    $authUser,
-                    '',
-                    'sii',
-                    [$actorEmail, $actorId, $id]
-                );
+                // Client status is authoritative for all canonical Key Persons linked to it.
                 dbExecute(
                     $conn,
                     "UPDATE keypersons_table
                      SET status = 'deactivated', updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
-                     WHERE clients_id = ?{$scopeSql}",
-                    $scopeTypes,
-                    $scopeParams
+                     WHERE clients_id = ?",
+                    'sii',
+                    [$actorEmail, $actorId, $id]
                 )->close();
             }
         }
@@ -83,19 +78,13 @@ try {
                 $recordTypes,
                 $recordParams
             )->close();
-            [$keypersonScopeSql, $keypersonTypes, $keypersonParams] = appendScopedWhere(
-                $authUser,
-                '',
-                'ssii',
-                [$category, $actorEmail, $actorId, $id]
-            );
             dbExecute(
                 $conn,
                 "UPDATE keypersons_table
                  SET clients_category = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
-                 WHERE clients_id = ?{$keypersonScopeSql}",
-                $keypersonTypes,
-                $keypersonParams
+                 WHERE clients_id = ?",
+                'ssii',
+                [$category, $actorEmail, $actorId, $id]
             )->close();
 
             [$logScopeSql, $logTypes, $logParams] = appendScopedWhere(
@@ -124,12 +113,6 @@ try {
             dbExecute(
                 $conn,
                 'UPDATE clients_table SET owner_pms_admin_id = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                'isii',
-                [$ownerPmsAdminId, $actorEmail, $actorId, $id]
-            )->close();
-            dbExecute(
-                $conn,
-                'UPDATE keypersons_table SET owner_pms_admin_id = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE clients_id = ?',
                 'isii',
                 [$ownerPmsAdminId, $actorEmail, $actorId, $id]
             )->close();

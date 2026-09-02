@@ -95,7 +95,108 @@ function assertGiftListAccessible(mysqli $conn, array $authUser, int $giftListId
     return $row;
 }
 
-function normalizeGiftListRows(mysqli $conn, int $ownerPmsAdminId, mixed $rows): array
+function validateGiftDecision(mixed $value): string
+{
+    $decision = trim((string) $value);
+    if (!in_array($decision, ['selected', 'not_selected'], true)) {
+        throw new RuntimeException('Please choose a valid gift-list decision.', 422);
+    }
+    return $decision;
+}
+
+function ensureGiftList(mysqli $conn, int $giftYear, int $ownerPmsAdminId, int $actorId): int
+{
+    $stmt = dbExecute(
+        $conn,
+        'INSERT INTO gift_lists (gift_year, owner_pms_admin_id, created_by_id, updated_by_id)
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)',
+        'iiii',
+        [$giftYear, $ownerPmsAdminId, $actorId, $actorId]
+    );
+    $giftListId = (int) $stmt->insert_id;
+    $stmt->close();
+    if ($giftListId <= 0) {
+        throw new RuntimeException('Unable to resolve the annual gift list.', 500);
+    }
+    return $giftListId;
+}
+
+function fetchGiftListKeyperson(mysqli $conn, int $keypersonId): array
+{
+    $keyperson = dbFetchOne(
+        $conn,
+        "SELECT k.id, k.clients_id, k.clients_name, k.key_person, k.status
+         FROM keypersons_table k
+         WHERE k.id = ? AND k.status = 'active'
+         LIMIT 1",
+        'i',
+        [$keypersonId]
+    );
+    if (!$keyperson) {
+        throw new RuntimeException('The selected Key Person is unavailable or inactive.', 422);
+    }
+    return $keyperson;
+}
+
+function upsertGiftListItem(
+    mysqli $conn,
+    int $giftListId,
+    array $keyperson,
+    string $decision,
+    ?string $rate,
+    string $notes,
+    int $actorId
+): void {
+    $decision = validateGiftDecision($decision);
+    if ($decision === 'selected') {
+        $rate = validateGiftRate($rate);
+    } else {
+        $rate = null;
+    }
+
+    dbExecute(
+        $conn,
+        'INSERT INTO gift_list_items
+            (gift_list_id, keyperson_id, client_id, gift_decision, gift_rate, notes,
+             keyperson_name_snapshot, client_name_snapshot, source, is_verified,
+             created_by_id, updated_by_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, "live", 1, ?, ?)
+         ON DUPLICATE KEY UPDATE
+            client_id = VALUES(client_id),
+            gift_decision = VALUES(gift_decision),
+            gift_rate = VALUES(gift_rate),
+            notes = VALUES(notes),
+            keyperson_name_snapshot = VALUES(keyperson_name_snapshot),
+            client_name_snapshot = VALUES(client_name_snapshot),
+            source = "live",
+            is_verified = 1,
+            updated_by_id = VALUES(updated_by_id),
+            updated_at = CURRENT_TIMESTAMP',
+        'iiisssssii',
+        [
+            $giftListId,
+            (int) $keyperson['id'],
+            (int) $keyperson['clients_id'],
+            $decision,
+            $rate,
+            $notes !== '' ? $notes : null,
+            (string) $keyperson['key_person'],
+            (string) $keyperson['clients_name'],
+            $actorId,
+            $actorId,
+        ]
+    )->close();
+
+    dbExecute(
+        $conn,
+        'UPDATE gift_lists SET updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        'ii',
+        [$actorId, $giftListId]
+    )->close();
+}
+
+function normalizeGiftListRows(mysqli $conn, int $_ownerPmsAdminId, mixed $rows): array
 {
     if (!is_array($rows) || $rows === []) {
         throw new RuntimeException('Please add at least one key person to the gift list.', 422);
@@ -136,17 +237,15 @@ function normalizeGiftListRows(mysqli $conn, int $ownerPmsAdminId, mixed $rows):
     }
 
     $placeholders = implode(',', array_fill(0, count($keypersonIds), '?'));
-    $types = str_repeat('i', count($keypersonIds)) . 'i';
-    $params = array_merge($keypersonIds, [$ownerPmsAdminId]);
+    $types = str_repeat('i', count($keypersonIds));
     $keypersons = dbFetchAll(
         $conn,
-        "SELECT id, clients_id, clients_name, key_person, owner_pms_admin_id
-         FROM keypersons_table
-         WHERE id IN ({$placeholders})
-           AND owner_pms_admin_id = ?
-           AND status = 'active'",
+        "SELECT k.id, k.clients_id, k.clients_name, k.key_person
+         FROM keypersons_table k
+         WHERE k.id IN ({$placeholders})
+           AND k.status = 'active'",
         $types,
-        $params
+        $keypersonIds
     );
 
     $available = [];
@@ -158,7 +257,7 @@ function normalizeGiftListRows(mysqli $conn, int $ownerPmsAdminId, mixed $rows):
     foreach ($inputRows as $keypersonId => $row) {
         $keyperson = $available[$keypersonId] ?? null;
         if (!$keyperson) {
-            throw new RuntimeException('One or more selected key persons are outside the selected PMS scope or inactive.', 422);
+            throw new RuntimeException('One or more selected key persons are unavailable or inactive.', 422);
         }
         if ((int) $keyperson['clients_id'] !== (int) $row['client_id']) {
             throw new RuntimeException('The selected key person does not belong to the selected client.', 422);
@@ -213,7 +312,7 @@ function giftListResponsePayload(mysqli $conn, array $list): array
          FROM gift_list_items gli
          LEFT JOIN keypersons_table k ON k.id = gli.keyperson_id
          LEFT JOIN clients_table c ON c.id = gli.client_id
-         WHERE gli.gift_list_id = ?
+         WHERE gli.gift_list_id = ? AND gli.gift_decision = 'selected'
          ORDER BY gli.client_name_snapshot ASC, gli.keyperson_name_snapshot ASC, gli.id ASC",
         'i',
         [(int) $list['id']]

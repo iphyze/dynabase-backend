@@ -88,31 +88,25 @@ try {
         $clientRecordParams
     )->close();
 
-    // Keep legacy denormalised fields in sync without crossing the actor's PMS scope.
-    [$keypersonScopeSql, $keypersonTypes, $keypersonParams] = appendScopedWhere(
-        $authUser,
-        '',
-        'sssssisii',
+    // Keep canonical Key Person client snapshots in sync. PMS relationship ownership
+    // is stored in keyperson_pms_assignments and must not move with Client ownership.
+    dbExecute(
+        $conn,
+        "UPDATE keypersons_table
+         SET clients_name = ?, clients_email = ?, clients_address = ?, clients_hq_location = ?, clients_category = ?,
+             updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE clients_id = ?",
+        'ssssssii',
         [
             $clientsName,
             $clientsEmail,
             $clientsAddress,
             $clientsHqLocation,
             $clientsCategory,
-            $ownerPmsAdminId,
             $actorEmail,
             $actorId,
             $id,
         ]
-    );
-    dbExecute(
-        $conn,
-        "UPDATE keypersons_table
-         SET clients_name = ?, clients_email = ?, clients_address = ?, clients_hq_location = ?, clients_category = ?,
-             owner_pms_admin_id = ?, updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE clients_id = ?{$keypersonScopeSql}",
-        $keypersonTypes,
-        $keypersonParams
     )->close();
 
     [$logScopeSql, $logTypes, $logParams] = appendScopedWhere(

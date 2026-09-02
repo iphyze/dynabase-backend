@@ -466,6 +466,34 @@ function replaceProjectClients(mysqli $conn, array $authUser, int $code, string 
     }
 }
 
+// Keep the legacy single-value columns aligned with the first active dynamic row.
+// clients_keypersons_table remains the source of truth for all tender relationships.
+function syncProjectPrimaryRelationshipSnapshot(mysqli $conn, int $code): void
+{
+    $primary = dbFetchOne(
+        $conn,
+        "SELECT `clients_name` AS project_client, `keyperson`
+         FROM `clients_keypersons_table`
+         WHERE `project_id` = ? AND `record_status` = 'active'
+         ORDER BY `id` ASC
+         LIMIT 1",
+        'i',
+        [$code]
+    );
+
+    if (!$primary) {
+        return;
+    }
+
+    $stmt = dbExecute(
+        $conn,
+        'UPDATE `project_info_table` SET `project_client` = ?, `keyperson` = ? WHERE `code` = ?',
+        'ssi',
+        [cleanString($primary['project_client'] ?? ''), cleanString($primary['keyperson'] ?? ''), $code]
+    );
+    $stmt->close();
+}
+
 function replaceProjectDocuments(mysqli $conn, array $authUser, int $code, string $projectTitle, ?int $ownerPmsAdminId, array $rows, string $table, string $field): void
 {
     dbExecute($conn, "UPDATE `{$table}` SET `record_status` = 'deactivated' WHERE `project_id` = ?", 'i', [$code])->close();

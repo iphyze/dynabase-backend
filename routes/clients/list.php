@@ -14,9 +14,22 @@ $authUser = authenticateUser();
 $canViewKeypersons = userHasPermission($conn, $authUser, 'keypersons.view');
 $canViewInfluenceLogs = userHasPermission($conn, $authUser, 'influence_logs.view');
 $canViewTenders = userHasPermission($conn, $authUser, 'tenders.view');
-$keypersonCountSql = $canViewKeypersons
-    ? "(SELECT COUNT(*) FROM keypersons_table kp WHERE kp.clients_id = c.id AND kp.owner_pms_admin_id <=> c.owner_pms_admin_id AND kp.status <> 'deactivated')"
-    : '0';
+$viewerPmsAdminId = resolveOwnerPmsAdminId($authUser);
+$keypersonCountSql = '0';
+if ($canViewKeypersons) {
+    if ($viewerPmsAdminId !== null && $viewerPmsAdminId > 0) {
+        $viewerPmsAdminIdSql = (int) $viewerPmsAdminId;
+        $keypersonCountSql = "(SELECT COUNT(*) FROM keypersons_table kp
+            WHERE kp.clients_id = c.id
+              AND kp.status <> 'deactivated'
+              AND EXISTS (
+                  SELECT 1 FROM keyperson_pms_assignments kpa
+                  WHERE kpa.keyperson_id = kp.id AND kpa.pms_admin_id = {$viewerPmsAdminIdSql}
+              ))";
+    } else {
+        $keypersonCountSql = "(SELECT COUNT(*) FROM keypersons_table kp WHERE kp.clients_id = c.id AND kp.status <> 'deactivated')";
+    }
+}
 $logCountSql = $canViewInfluenceLogs
     ? "(SELECT COUNT(*) FROM log_table lg WHERE lg.clients_id = c.id AND lg.owner_pms_admin_id <=> c.owner_pms_admin_id)"
     : '0';

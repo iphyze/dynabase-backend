@@ -260,7 +260,26 @@ $recentTenders = [];
 if ($access['tenders']) {
     $recentTenderCandidates = dashboardSafeAll(
         $conn,
-        "SELECT p.id, p.code, p.tender_code, p.project_title, p.project_client, p.project_city, p.project_country,
+        "SELECT p.id, p.code, p.tender_code, p.project_title,
+                COALESCE(
+                    (SELECT NULLIF(TRIM(recent_ck.clients_name), '')
+                     FROM clients_keypersons_table recent_ck
+                     WHERE recent_ck.project_id = p.code AND recent_ck.record_status = 'active'
+                       AND NULLIF(TRIM(recent_ck.clients_name), '') IS NOT NULL
+                     ORDER BY recent_ck.id ASC
+                     LIMIT 1),
+                    NULLIF(TRIM(p.project_client), '')
+                ) AS project_client,
+                COALESCE(
+                    (SELECT NULLIF(TRIM(recent_ck.keyperson), '')
+                     FROM clients_keypersons_table recent_ck
+                     WHERE recent_ck.project_id = p.code AND recent_ck.record_status = 'active'
+                       AND NULLIF(TRIM(recent_ck.keyperson), '') IS NOT NULL
+                     ORDER BY recent_ck.id ASC
+                     LIMIT 1),
+                    NULLIF(TRIM(p.keyperson), '')
+                ) AS keyperson,
+                p.project_city, p.project_country,
                 p.project_importance, p.progress, p.project_status, p.tender_due, p.tender_received_date,
                 p.updated_at, p.created_at
          FROM project_info_table p

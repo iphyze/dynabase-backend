@@ -19,6 +19,7 @@ $status = cleanString($_GET['status'] ?? 'active');
 $giftStatus = cleanString($_GET['gift_status'] ?? '');
 $giftYear = validateGiftYear($_GET['gift_year'] ?? date('Y'));
 $ownerPmsAdminId = (int) ($_GET['owner_pms_admin_id'] ?? 0);
+$viewerOwnerPmsAdminId = resolveOwnerPmsAdminId($authUser);
 $sort = cleanString($_GET['sort'] ?? 'key_person');
 $order = strtolower(cleanString($_GET['order'] ?? 'asc')) === 'desc' ? 'DESC' : 'ASC';
 [$page, $limit, $offset] = paginationParams();
@@ -43,11 +44,30 @@ $orderBy = $sortMap[$sort] ?? $sortMap['key_person'];
 $giftJoinSql = '';
 $giftJoinTypes = '';
 $giftJoinParams = [];
+$giftContextOwnerId = $viewerOwnerPmsAdminId;
+if (($giftContextOwnerId === null || $giftContextOwnerId <= 0) && $ownerPmsAdminId > 0 && userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
+    $giftContextOwnerId = $ownerPmsAdminId;
+}
 if ($canViewGiftLists) {
-    $giftJoinSql = ' LEFT JOIN gift_lists gl ON gl.owner_pms_admin_id = k.owner_pms_admin_id AND gl.gift_year = ?
-                     LEFT JOIN gift_list_items gli ON gli.gift_list_id = gl.id AND gli.keyperson_id = k.id';
-    $giftJoinTypes = 'i';
-    $giftJoinParams = [$giftYear];
+    if ($giftContextOwnerId !== null && $giftContextOwnerId > 0) {
+        $giftJoinSql = ' LEFT JOIN gift_lists gl ON gl.owner_pms_admin_id = ? AND gl.gift_year = ?
+                         LEFT JOIN gift_list_items gli ON gli.gift_list_id = gl.id AND gli.keyperson_id = k.id';
+        $giftJoinTypes = 'ii';
+        $giftJoinParams = [$giftContextOwnerId, $giftYear];
+    } else {
+        $giftJoinSql = " LEFT JOIN (
+                            SELECT any_items.keyperson_id,
+                                   'selected' AS gift_decision,
+                                   CASE WHEN COUNT(DISTINCT any_items.gift_rate) = 1 THEN MAX(any_items.gift_rate) ELSE NULL END AS gift_rate,
+                                   NULL AS source
+                            FROM gift_list_items any_items
+                            INNER JOIN gift_lists any_lists ON any_lists.id = any_items.gift_list_id
+                            WHERE any_lists.gift_year = ? AND any_items.gift_decision = 'selected'
+                            GROUP BY any_items.keyperson_id
+                         ) gli ON gli.keyperson_id = k.id";
+        $giftJoinTypes = 'i';
+        $giftJoinParams = [$giftYear];
+    }
 }
 
 $baseWhere = ' WHERE 1 = 1';
@@ -82,13 +102,13 @@ if ($canViewGiftLists && $giftStatus !== '' && $giftStatus !== 'all') {
         : " AND (gli.gift_decision IS NULL OR gli.gift_decision = 'not_selected')";
 }
 
-if ($ownerPmsAdminId > 0 && isGlobalDataUser($authUser)) {
-    $baseWhere .= ' AND k.owner_pms_admin_id = ?';
+if ($ownerPmsAdminId > 0 && userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
+    $baseWhere .= ' AND EXISTS (SELECT 1 FROM keyperson_pms_assignments kpa_filter WHERE kpa_filter.keyperson_id = k.id AND kpa_filter.pms_admin_id = ?)';
     $baseWhereTypes .= 'i';
     $baseWhereParams[] = $ownerPmsAdminId;
 }
 
-[$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'k');
+[$scopeSql, $scopeTypes, $scopeParams] = appendKeypersonScopedWhere($authUser, 'k');
 $baseWhere .= $scopeSql;
 $baseWhereTypes .= $scopeTypes;
 $baseWhereParams = array_merge($baseWhereParams, $scopeParams);
@@ -141,8 +161,8 @@ $giftSelectSql = $canViewGiftLists
        NULL AS annual_gift_source,
        NULL AS gift_year,";
 
-$listPrefixTypes = $canViewGiftLists ? 'ii' : '';
-$listPrefixParams = $canViewGiftLists ? [$giftYear, $giftYear] : [];
+$listPrefixTypes = $canViewGiftLists ? ('i' . $giftJoinTypes) : '';
+$listPrefixParams = $canViewGiftLists ? array_merge([$giftYear], $giftJoinParams) : [];
 $listTypes = $listPrefixTypes . $whereTypes . 'ii';
 $listParams = array_merge($listPrefixParams, $whereParams, [$limit, $offset]);
 
@@ -152,18 +172,50 @@ $rows = dbFetchAll(
             k.clients_category, k.key_person, k.key_persons_tel, k.key_persons_email, k.key_persons_address,
             {$giftSelectSql}
             k.title, k.info, k.created_by, k.created_by_id, k.updated_by,
-            k.updated_by_id, k.owner_pms_admin_id, k.status, k.created_at, k.updated_at,
-            NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), '') AS owner_pms_admin_name,
-            u.email AS owner_pms_admin_email
+            k.updated_by_id, k.status, k.created_at, k.updated_at,
+            (SELECT GROUP_CONCAT(DISTINCT NULLIF(TRIM(CONCAT(COALESCE(au.first_name, ''), ' ', COALESCE(au.last_name, ''))), '') ORDER BY au.first_name, au.last_name SEPARATOR ', ')
+             FROM keyperson_pms_assignments kpa_names INNER JOIN users au ON au.id = kpa_names.pms_admin_id
+             WHERE kpa_names.keyperson_id = k.id) AS pms_assignment_names,
+            (SELECT COUNT(*) FROM keyperson_pms_assignments kpa_count WHERE kpa_count.keyperson_id = k.id) AS pms_assignment_count
      FROM keypersons_table k
      {$giftJoinSql}
-     LEFT JOIN users u ON u.id = k.owner_pms_admin_id
      {$where}
      ORDER BY {$orderBy} {$order}, k.id DESC
      LIMIT ? OFFSET ?",
     $listTypes,
     $listParams
 );
+
+if ($viewerOwnerPmsAdminId !== null && $viewerOwnerPmsAdminId > 0) {
+    $visibleOwner = dbFetchOne(
+        $conn,
+        "SELECT id, email, NULLIF(TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))), '') AS name FROM users WHERE id = ? LIMIT 1",
+        'i',
+        [$viewerOwnerPmsAdminId]
+    );
+    foreach ($rows as &$row) {
+        $row['owner_pms_admin_id'] = $viewerOwnerPmsAdminId;
+        $row['owner_pms_admin_name'] = $visibleOwner['name'] ?? null;
+        $row['owner_pms_admin_email'] = $visibleOwner['email'] ?? null;
+        unset($row['pms_assignment_names'], $row['pms_assignment_count']);
+    }
+    unset($row);
+} elseif (userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
+    foreach ($rows as &$row) {
+        $row['owner_pms_admin_id'] = null;
+        $row['owner_pms_admin_name'] = $row['pms_assignment_names'] ?? null;
+        $row['owner_pms_admin_email'] = null;
+    }
+    unset($row);
+} else {
+    foreach ($rows as &$row) {
+        $row['owner_pms_admin_id'] = null;
+        $row['owner_pms_admin_name'] = null;
+        $row['owner_pms_admin_email'] = null;
+        unset($row['pms_assignment_names'], $row['pms_assignment_count']);
+    }
+    unset($row);
+}
 
 jsonResponse([
     'status' => 'Success',

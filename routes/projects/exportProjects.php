@@ -95,7 +95,20 @@ $where .= $scopeSql;
 
 $rows = dbFetchAll(
     $conn,
-    "SELECT p.`project_title`, p.`division`, p.`project_country`, p.`project_city`, p.`city_code`, p.`code`, p.`tender_code`,
+    "SELECT p.`project_title`,
+            COALESCE(
+                (SELECT GROUP_CONCAT(NULLIF(TRIM(export_ck.`clients_name`), '') ORDER BY export_ck.`id` ASC SEPARATOR '; ')
+                 FROM `clients_keypersons_table` export_ck
+                 WHERE export_ck.`project_id` = p.`code` AND export_ck.`record_status` = 'active'),
+                NULLIF(TRIM(p.`project_client`), '')
+            ) AS project_client,
+            COALESCE(
+                (SELECT GROUP_CONCAT(NULLIF(TRIM(export_ck.`keyperson`), '') ORDER BY export_ck.`id` ASC SEPARATOR '; ')
+                 FROM `clients_keypersons_table` export_ck
+                 WHERE export_ck.`project_id` = p.`code` AND export_ck.`record_status` = 'active'),
+                NULLIF(TRIM(p.`keyperson`), '')
+            ) AS keyperson,
+            p.`division`, p.`project_country`, p.`project_city`, p.`city_code`, p.`code`, p.`tender_code`,
             p.`project_status`, p.`progress`, p.`tender_received_date`, p.`tender_due`, p.`tender_submission_date`,
             p.`tender_amount`, p.`currency`, p.`project_manager`, p.`qs_manager`, p.`mep_consultants`, p.`architect`,
             p.`project_duration`, p.`end_user`, p.`project_importance`, p.`contract_type`, p.`prelim_pricing`,
@@ -123,7 +136,7 @@ echo "\xEF\xBB\xBF";
 $output = fopen('php://output', 'w');
 
 fputcsv($output, [
-    'Tender Code', 'Awarded Project Code', 'Project Title', 'Division', 'Country', 'City', 'City Code',
+    'Tender Code', 'Awarded Project Code', 'Project Title', 'Project Client', 'Key Person', 'Division', 'Country', 'City', 'City Code',
     'Status', 'Progress', 'Tender Received', 'Tender Due', 'Submission Date', 'Tender Amount', 'Currency',
     'Project Manager', 'QS Manager', 'MEP Consultants', 'Architect', 'Project Duration', 'End User',
     'Importance', 'Contract Type', 'Prelim Pricing', 'Pricing Strategy', 'Date Extension', 'Rate Used',
@@ -136,6 +149,8 @@ foreach ($rows as $row) {
         $row['tender_code'] ?? '',
         $row['awarded_project_code'] ?: 'Unawarded',
         $row['project_title'] ?? '',
+        $row['project_client'] ?? '',
+        $row['keyperson'] ?? '',
         $row['division'] ?? '',
         $row['project_country'] ?? '',
         $row['project_city'] ?? '',

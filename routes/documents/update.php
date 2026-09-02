@@ -15,7 +15,7 @@ if ($id <= 0) {
     throw new RuntimeException('Document ID is required.', 422);
 }
 $existing = assertDocumentAccessible($conn, $authUser, $id);
-$form = documentFormPayload($conn, $_POST);
+$form = documentFormPayload($conn, $authUser, $_POST);
 assertDocumentTitleAvailable($conn, $form['document_title'], $form['document_type'], $id);
 
 $replacement = null;

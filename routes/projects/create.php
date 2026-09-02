@@ -55,6 +55,7 @@ try {
     $stmt->close();
 
     replaceProjectClients($conn, $authUser, $code, $project['project_title'], $ownerPmsAdminId, $clients);
+    syncProjectPrimaryRelationshipSnapshot($conn, $code);
     replaceProjectDocuments($conn, $authUser, $code, $project['project_title'], $ownerPmsAdminId, $tenderDocuments, 'tender_document_table', 'tender_document');
     replaceProjectDocuments($conn, $authUser, $code, $project['project_title'], $ownerPmsAdminId, $technicalDocuments, 'technical_document_table', 'technical_document');
 

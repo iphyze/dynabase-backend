@@ -9,7 +9,7 @@ requireMethod('POST');
 $authUser = authenticateUser();
 assertDocumentRevisionSchema($conn);
 
-$form = documentFormPayload($conn, $_POST);
+$form = documentFormPayload($conn, $authUser, $_POST);
 assertDocumentTitleAvailable($conn, $form['document_title'], $form['document_type']);
 if (!documentUploadWasProvided()) {
     throw new RuntimeException('Please select a document to upload.', 422);

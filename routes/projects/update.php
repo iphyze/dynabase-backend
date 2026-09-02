@@ -70,6 +70,7 @@ try {
     if ($clients !== null) {
         replaceProjectClients($conn, $authUser, $code, $project['project_title'], $ownerPmsAdminId, $clients);
     }
+    syncProjectPrimaryRelationshipSnapshot($conn, $code);
 
     if ($tenderDocuments !== null) {
         replaceProjectDocuments($conn, $authUser, $code, $project['project_title'], $ownerPmsAdminId, $tenderDocuments, 'tender_document_table', 'tender_document');

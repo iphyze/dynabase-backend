@@ -15,17 +15,25 @@ $keypersonId = (int) ($payload['keyperson_id'] ?? 0);
 if ($keypersonId <= 0) {
     throw new RuntimeException('Please select a key person.', 422);
 }
-$decision = validateGiftDecision($payload['gift_decision'] ?? 'pending');
-$rate = validateGiftRate($payload['gift_rate'] ?? null, $decision);
+$decision = validateGiftDecision($payload['gift_decision'] ?? 'selected');
+$rate = $decision === 'selected' ? validateGiftRate($payload['gift_rate'] ?? null) : null;
 $notes = cleanString($payload['notes'] ?? '');
 if (mb_strlen($notes) > 1000) {
     throw new RuntimeException('Gift-list notes cannot exceed 1000 characters.', 422);
 }
 
-$keyperson = assertGiftKeypersonOwnedBy($conn, $keypersonId, $ownerPmsAdminId);
+$keyperson = fetchGiftListKeyperson($conn, $keypersonId);
 $actorId = (int) $authUser['id'];
-$giftListId = ensureGiftList($conn, $giftYear, $ownerPmsAdminId, $actorId);
-upsertGiftListItem($conn, $giftListId, $keyperson, $decision, $rate, $notes, $actorId);
+$giftListId = 0;
+$conn->begin_transaction();
+try {
+    $giftListId = ensureGiftList($conn, $giftYear, $ownerPmsAdminId, $actorId);
+    upsertGiftListItem($conn, $giftListId, $keyperson, $decision, $rate, $notes, $actorId);
+    $conn->commit();
+} catch (Throwable $exception) {
+    $conn->rollback();
+    throw $exception;
+}
 
 writeAuditLog($conn, $authUser, 'gift_list.item_updated', 'keyperson', $keypersonId, [
     'gift_year' => $giftYear,
@@ -36,7 +44,7 @@ writeAuditLog($conn, $authUser, 'gift_list.item_updated', 'keyperson', $keyperso
 
 jsonResponse([
     'status' => 'Success',
-    'message' => $decision === 'pending' ? 'Gift decision cleared.' : 'Gift decision saved.',
+    'message' => 'Gift decision saved.',
     'data' => [
         'keyperson_id' => $keypersonId,
         'gift_year' => $giftYear,

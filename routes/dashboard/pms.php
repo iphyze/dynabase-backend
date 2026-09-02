@@ -36,34 +36,46 @@ $keypersonSummary = ['total' => 0, 'active' => 0];
 if ($access['keypersons']) {
     $keypersonSummary = dbFetchOne(
         $conn,
-        "SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active
-         FROM keypersons_table WHERE owner_pms_admin_id = ?",
+        "SELECT COUNT(*) AS total, SUM(CASE WHEN k.status = 'active' THEN 1 ELSE 0 END) AS active
+         FROM keypersons_table k
+         INNER JOIN keyperson_pms_assignments kpa ON kpa.keyperson_id = k.id
+         WHERE kpa.pms_admin_id = ?",
         'i',
         [$ownerPmsAdminId]
     ) ?? [];
 }
 
-$giftSummary = ['recipients' => 0, 'gift_clients' => 0, 'last_updated_at' => null, 'gift_list_id' => null];
+$giftSummary = ['recipients' => 0, 'gift_clients' => 0, 'directory_recipients' => 0, 'directory_gift_clients' => 0, 'last_updated_at' => null, 'gift_list_id' => null];
 $rateBreakdown = array_fill_keys(DYNABASE_GIFT_RATES, 0);
 if ($access['gift_lists']) {
     $giftSummary = dbFetchOne(
         $conn,
         "SELECT COUNT(items.id) AS recipients,
                 COUNT(DISTINCT items.client_id) AS gift_clients,
+                COUNT(DISTINCT CASE WHEN EXISTS (
+                    SELECT 1 FROM keyperson_pms_assignments kpa
+                    WHERE kpa.keyperson_id = items.keyperson_id AND kpa.pms_admin_id = ?
+                ) THEN items.keyperson_id END) AS directory_recipients,
+                COUNT(DISTINCT CASE WHEN EXISTS (
+                    SELECT 1 FROM clients_table owned_client
+                    WHERE owned_client.id = items.client_id
+                      AND owned_client.owner_pms_admin_id = ?
+                      AND owned_client.status = 'active'
+                ) THEN items.client_id END) AS directory_gift_clients,
                 MAX(items.updated_at) AS last_updated_at,
                 MAX(gl.id) AS gift_list_id
          FROM gift_lists gl
-         LEFT JOIN gift_list_items items ON items.gift_list_id = gl.id
+         LEFT JOIN gift_list_items items ON items.gift_list_id = gl.id AND items.gift_decision = 'selected'
          WHERE gl.gift_year = ? AND gl.owner_pms_admin_id = ?",
-        'ii',
-        [$giftYear, $ownerPmsAdminId]
+        'iiii',
+        [$ownerPmsAdminId, $ownerPmsAdminId, $giftYear, $ownerPmsAdminId]
     ) ?? [];
     $rateRows = dbFetchAll(
         $conn,
         "SELECT items.gift_rate, COUNT(*) AS total
          FROM gift_lists gl
          INNER JOIN gift_list_items items ON items.gift_list_id = gl.id
-         WHERE gl.gift_year = ? AND gl.owner_pms_admin_id = ?
+         WHERE gl.gift_year = ? AND gl.owner_pms_admin_id = ? AND items.gift_decision = 'selected'
          GROUP BY items.gift_rate",
         'ii',
         [$giftYear, $ownerPmsAdminId]
@@ -89,12 +101,12 @@ $recentKeypersons = [];
 if ($access['keypersons']) {
     $giftSelect = $access['gift_lists'] ? 'items.gift_rate' : 'NULL AS gift_rate';
     $giftJoin = $access['gift_lists']
-        ? 'LEFT JOIN gift_lists gl ON gl.owner_pms_admin_id = k.owner_pms_admin_id AND gl.gift_year = ? '
+        ? 'LEFT JOIN gift_lists gl ON gl.owner_pms_admin_id = ? AND gl.gift_year = ? '
             . 'LEFT JOIN gift_list_items items ON items.gift_list_id = gl.id AND items.keyperson_id = k.id'
         : '';
-    $recentKeypersonTypes = $access['gift_lists'] ? 'ii' : 'i';
+    $recentKeypersonTypes = $access['gift_lists'] ? 'iii' : 'i';
     $recentKeypersonParams = $access['gift_lists']
-        ? [$giftYear, $ownerPmsAdminId]
+        ? [$ownerPmsAdminId, $giftYear, $ownerPmsAdminId]
         : [$ownerPmsAdminId];
 
     $recentKeypersons = dbFetchAll(
@@ -103,8 +115,9 @@ if ($access['keypersons']) {
                 k.key_persons_email, k.key_persons_tel, k.updated_at, k.created_at,
                 {$giftSelect}
          FROM keypersons_table k
+         INNER JOIN keyperson_pms_assignments kpa ON kpa.keyperson_id = k.id
          {$giftJoin}
-         WHERE k.owner_pms_admin_id = ? AND k.status = 'active'
+         WHERE kpa.pms_admin_id = ? AND k.status = 'active'
          ORDER BY COALESCE(k.updated_at, k.created_at) DESC, k.id DESC LIMIT 6",
         $recentKeypersonTypes,
         $recentKeypersonParams
@@ -134,17 +147,19 @@ $recentGiftItems = $access['gift_lists'] ? dbFetchAll(
      INNER JOIN gift_list_items items ON items.gift_list_id = gl.id
      LEFT JOIN clients_table c ON c.id = items.client_id
      LEFT JOIN keypersons_table k ON k.id = items.keyperson_id
-     WHERE gl.gift_year = ? AND gl.owner_pms_admin_id = ?
+     WHERE gl.gift_year = ? AND gl.owner_pms_admin_id = ? AND items.gift_decision = 'selected'
      ORDER BY items.updated_at DESC, items.id DESC
      LIMIT 5",
     'ii',
     [$giftYear, $ownerPmsAdminId]
 ) : [];
 $recipients = (int) ($giftSummary['recipients'] ?? 0);
+$directoryRecipients = (int) ($giftSummary['directory_recipients'] ?? 0);
+$directoryGiftClients = (int) ($giftSummary['directory_gift_clients'] ?? 0);
 $activeKeypersons = (int) ($keypersonSummary['active'] ?? 0);
 $activeClients = (int) ($clientSummary['active'] ?? 0);
-$recipientCoverage = $activeKeypersons > 0 ? round(($recipients / $activeKeypersons) * 100, 1) : 0.0;
-$clientCoverage = $activeClients > 0 ? round((((int) ($giftSummary['gift_clients'] ?? 0)) / $activeClients) * 100, 1) : 0.0;
+$recipientCoverage = $activeKeypersons > 0 ? round(($directoryRecipients / $activeKeypersons) * 100, 1) : 0.0;
+$clientCoverage = $activeClients > 0 ? round(($directoryGiftClients / $activeClients) * 100, 1) : 0.0;
 
 jsonResponse([
     'status' => 'Success',
@@ -165,8 +180,10 @@ jsonResponse([
             'keypersons' => $activeKeypersons,
             'all_keypersons' => (int) ($keypersonSummary['total'] ?? 0),
             'recipients' => $recipients,
-            'unlisted_keypersons' => max(0, $activeKeypersons - $recipients),
+            'directory_recipients' => $directoryRecipients,
+            'unlisted_keypersons' => max(0, $activeKeypersons - $directoryRecipients),
             'gift_clients' => (int) ($giftSummary['gift_clients'] ?? 0),
+            'directory_gift_clients' => $directoryGiftClients,
             'gift_list_id' => isset($giftSummary['gift_list_id']) && $giftSummary['gift_list_id'] !== null ? (int) $giftSummary['gift_list_id'] : null,
             'last_gift_update_at' => $giftSummary['last_updated_at'] ?? null,
             'rate_breakdown' => $rateBreakdown,

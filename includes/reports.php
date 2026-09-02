@@ -91,6 +91,16 @@ function dynabaseReportAccessForUser(mysqli $conn, array $authUser, string $type
     $canViewReports = in_array('reports.view', $effectivePermissions, true);
     $canExportReports = in_array('reports.export', $effectivePermissions, true);
 
+    if ($type === 'pms-ownership'
+        && !userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN, DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER])) {
+        return [
+            'can_view' => false,
+            'can_export' => false,
+            'view_permission' => $viewPermission,
+            'export_permission' => $exportPermission,
+        ];
+    }
+
     return [
         'can_view' => $canViewReports && in_array($viewPermission, $effectivePermissions, true),
         'can_export' => $canExportReports && in_array($exportPermission, $effectivePermissions, true),
@@ -110,10 +120,16 @@ function dynabaseReportRequireExportAccess(mysqli $conn, array $authUser, string
     }
 }
 
-function dynabaseReportAvailableGiftYears(mysqli $conn): array
+function dynabaseReportAvailableGiftYears(mysqli $conn, array $authUser = []): array
 {
     if (!dynabaseReportTableExists($conn, 'gift_lists')) return [];
-    $rows = dbFetchAll($conn, 'SELECT DISTINCT gift_year FROM gift_lists ORDER BY gift_year DESC');
+    [$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'gl');
+    $rows = dbFetchAll(
+        $conn,
+        "SELECT DISTINCT gl.gift_year FROM gift_lists gl WHERE 1 = 1{$scopeSql} ORDER BY gl.gift_year DESC",
+        $scopeTypes,
+        $scopeParams
+    );
     return array_values(array_map(static fn (array $row): int => (int) $row['gift_year'], $rows));
 }
 
@@ -157,7 +173,7 @@ function dynabaseReportHeaderRow(array $headers): array
     return array_map(static fn (string $header): array => dynabaseReportCell($header, DYNABASE_XLSX_STYLE_HEADER), $headers);
 }
 
-function dynabaseReportGiftRows(mysqli $conn, int $year = 0): array
+function dynabaseReportGiftRows(mysqli $conn, int $year = 0, array $authUser = []): array
 {
     if (!dynabaseReportTableExists($conn, 'gift_lists') || !dynabaseReportTableExists($conn, 'gift_list_items')) {
         return [];
@@ -168,9 +184,13 @@ function dynabaseReportGiftRows(mysqli $conn, int $year = 0): array
     $params = [];
     if ($year > 0) {
         $where .= ' AND gl.gift_year = ?';
-        $types = 'i';
+        $types .= 'i';
         $params[] = $year;
     }
+    [$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'gl');
+    $where .= $scopeSql;
+    $types .= $scopeTypes;
+    $params = array_merge($params, $scopeParams);
 
     return dbFetchAll(
         $conn,
@@ -526,33 +546,50 @@ function dynabaseReportCountBy(array $rows, callable $selector): array
     return array_map(static fn (string $label, int $count): array => [$label, $count], array_keys($counts), array_values($counts));
 }
 
-function dynabaseReportTenderWorkbook(mysqli $conn, int $year = 0): array
+function dynabaseReportTenderWorkbook(mysqli $conn, int $year = 0, array $authUser = []): array
 {
+    [$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'p');
     $rows = dbFetchAll(
         $conn,
-        "SELECT p.*, TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) AS owner_name
+        "SELECT p.*,
+                COALESCE(
+                    (SELECT GROUP_CONCAT(NULLIF(TRIM(report_ck.`clients_name`), '') ORDER BY report_ck.`id` ASC SEPARATOR '; ')
+                     FROM clients_keypersons_table report_ck
+                     WHERE report_ck.project_id = p.code AND report_ck.record_status = 'active'),
+                    NULLIF(TRIM(p.project_client), '')
+                ) AS project_client,
+                COALESCE(
+                    (SELECT GROUP_CONCAT(NULLIF(TRIM(report_ck.`keyperson`), '') ORDER BY report_ck.`id` ASC SEPARATOR '; ')
+                     FROM clients_keypersons_table report_ck
+                     WHERE report_ck.project_id = p.code AND report_ck.record_status = 'active'),
+                    NULLIF(TRIM(p.keyperson), '')
+                ) AS keyperson,
+                TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) AS owner_name
          FROM project_info_table p
          LEFT JOIN users u ON u.id = p.owner_pms_admin_id
-         WHERE p.record_status = 'active'
-         ORDER BY p.updated_at DESC, p.project_title ASC"
+         WHERE p.record_status = 'active'{$scopeSql}
+         ORDER BY p.updated_at DESC, p.project_title ASC",
+        $scopeTypes,
+        $scopeParams
     );
     $rows = dynabaseTenderAnalyticsFilterRows($rows, $year);
     $period = $year > 0 ? (string) $year : 'All years';
-    $headers = ['S/N', 'Tender Code', 'Project Title', 'Client', 'Key Person', 'Division', 'Country', 'City', 'Importance', 'Status', 'Progress', 'Received', 'Due', 'Submitted', 'Currency', 'Amount', 'PMS Owner', 'Last Updated'];
+    $headers = ['S/N', 'Tender Code', 'Project Title', 'Client', 'Key Person', 'Division', 'Country', 'City', 'Importance', 'Status', 'Progress', 'Received', 'Due', 'Submitted', 'Currency', 'Amount', 'PMS Owner', 'Created At', 'Last Updated'];
     $columns = [
-        ['key' => 'id', 'value' => static fn (array $r): int => 0, 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'],
+        ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'],
         ['key' => 'tender_code'], ['key' => 'project_title'], ['key' => 'project_client'], ['key' => 'keyperson'], ['key' => 'division'],
         ['key' => 'project_country'], ['key' => 'project_city'], ['key' => 'project_importance'], ['key' => 'project_status'], ['key' => 'progress'],
         ['key' => 'tender_received_date'], ['key' => 'tender_due'], ['key' => 'tender_submission_date'], ['key' => 'currency'], ['key' => 'tender_amount'],
-        ['key' => 'owner_name'], ['key' => 'updated_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+        ['key' => 'owner_name'], ['key' => 'created_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+        ['key' => 'updated_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
     ];
-    foreach ($rows as $index => $_) $rows[$index]['id'] = $index + 1;
+    foreach ($rows as $index => $_) $rows[$index]['serial'] = $index + 1;
     $dataSheet = dynabaseReportDataSheet(
         'Tender Portfolio Report',
         "Reporting period: {$period} • Complete active tender register • Generated " . date('d M Y, h:i A'),
         $headers,
         $rows,
-        [7, 20, 38, 26, 24, 22, 15, 18, 14, 15, 15, 14, 14, 14, 12, 18, 22, 18],
+        [7, 20, 38, 30, 30, 22, 15, 18, 14, 15, 15, 14, 14, 14, 12, 18, 22, 18, 18],
         $columns
     );
     $dataSheet['name'] = 'Tender Register';
@@ -566,15 +603,27 @@ function dynabaseReportTenderWorkbook(mysqli $conn, int $year = 0): array
     return [$dataSheet, $summary];
 }
 
-function dynabaseReportClientWorkbook(mysqli $conn): array
+function dynabaseReportClientWorkbook(mysqli $conn, array $authUser = []): array
 {
+    $viewerOwnerPmsAdminId = resolveOwnerPmsAdminId($authUser);
+    $keypersonCountSql = $viewerOwnerPmsAdminId !== null && $viewerOwnerPmsAdminId > 0
+        ? "(SELECT COUNT(*) FROM keypersons_table k
+            WHERE k.clients_id = c.id AND k.status = 'active'
+              AND EXISTS (
+                  SELECT 1 FROM keyperson_pms_assignments kpa
+                  WHERE kpa.keyperson_id = k.id AND kpa.pms_admin_id = " . (int) $viewerOwnerPmsAdminId . "))"
+        : "(SELECT COUNT(*) FROM keypersons_table k WHERE k.clients_id = c.id AND k.status = 'active')";
+    [$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'c');
     $rows = dbFetchAll(
         $conn,
         "SELECT c.*, TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) AS owner_name,
-                (SELECT COUNT(*) FROM keypersons_table k WHERE k.clients_id = c.id AND k.status = 'active') AS keyperson_count
+                {$keypersonCountSql} AS keyperson_count
          FROM clients_table c
          LEFT JOIN users u ON u.id = c.owner_pms_admin_id
-         ORDER BY c.status ASC, c.clients_name ASC"
+         WHERE 1 = 1{$scopeSql}
+         ORDER BY c.status ASC, c.clients_name ASC",
+        $scopeTypes,
+        $scopeParams
     );
     foreach ($rows as $index => $_) $rows[$index]['serial'] = $index + 1;
     $headers = ['S/N', 'Client', 'Category', 'HQ Location', 'Email', 'Website', 'Address', 'PMS Owner', 'Key Persons', 'Status', 'Created', 'Last Updated'];
@@ -596,37 +645,84 @@ function dynabaseReportClientWorkbook(mysqli $conn): array
     return [$dataSheet, $summary];
 }
 
-function dynabaseReportKeypersonWorkbook(mysqli $conn): array
+function dynabaseReportKeypersonWorkbook(mysqli $conn, array $authUser = []): array
 {
+    $viewerOwnerPmsAdminId = resolveOwnerPmsAdminId($authUser);
+    $canViewAllAssignments = userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
+    $canViewGiftLists = userHasPermission($conn, $authUser, 'gift_lists.view');
+
+    if ($viewerOwnerPmsAdminId !== null && $viewerOwnerPmsAdminId > 0) {
+        $assignmentSelect = "(SELECT GROUP_CONCAT(DISTINCT NULLIF(TRIM(CONCAT(COALESCE(au.first_name, ''), ' ', COALESCE(au.last_name, ''))), '') ORDER BY au.first_name, au.last_name SEPARATOR ', ')
+                              FROM keyperson_pms_assignments kpa
+                              INNER JOIN users au ON au.id = kpa.pms_admin_id
+                              WHERE kpa.keyperson_id = k.id AND kpa.pms_admin_id = " . (int) $viewerOwnerPmsAdminId . ') AS assignment_names';
+    } elseif ($canViewAllAssignments) {
+        $assignmentSelect = "(SELECT GROUP_CONCAT(DISTINCT NULLIF(TRIM(CONCAT(COALESCE(au.first_name, ''), ' ', COALESCE(au.last_name, ''))), '') ORDER BY au.first_name, au.last_name SEPARATOR ', ')
+                              FROM keyperson_pms_assignments kpa
+                              INNER JOIN users au ON au.id = kpa.pms_admin_id
+                              WHERE kpa.keyperson_id = k.id) AS assignment_names";
+    } else {
+        $assignmentSelect = 'NULL AS assignment_names';
+    }
+
+    if (!$canViewGiftLists) {
+        $giftCountSelect = '0 AS gift_list_count';
+    } else {
+        $giftScope = $viewerOwnerPmsAdminId !== null && $viewerOwnerPmsAdminId > 0
+            ? ' AND gl_count.owner_pms_admin_id = ' . (int) $viewerOwnerPmsAdminId
+            : '';
+        $giftCountSelect = "(SELECT COUNT(*) FROM gift_list_items gli
+                             INNER JOIN gift_lists gl_count ON gl_count.id = gli.gift_list_id
+                             WHERE gli.keyperson_id = k.id AND gli.gift_decision = 'selected'{$giftScope}) AS gift_list_count";
+    }
+
+    [$scopeSql, $scopeTypes, $scopeParams] = appendKeypersonScopedWhere($authUser, 'k');
     $rows = dbFetchAll(
         $conn,
-        "SELECT k.*, TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) AS owner_name,
-                (SELECT COUNT(*) FROM gift_list_items gli WHERE gli.keyperson_id = k.id AND gli.gift_decision = 'selected') AS gift_list_count
+        "SELECT k.*,
+                {$assignmentSelect},
+                {$giftCountSelect}
          FROM keypersons_table k
-         LEFT JOIN users u ON u.id = k.owner_pms_admin_id
-         ORDER BY k.status ASC, k.clients_name ASC, k.key_person ASC"
+         WHERE 1 = 1{$scopeSql}
+         ORDER BY k.status ASC, k.clients_name ASC, k.key_person ASC",
+        $scopeTypes,
+        $scopeParams
     );
     foreach ($rows as $index => $_) $rows[$index]['serial'] = $index + 1;
-    $headers = ['S/N', 'Key Person', 'Role / Title', 'Client', 'Client Category', 'Location', 'Email', 'Phone', 'PMS Owner', 'Gift Lists', 'Status', 'Last Updated'];
+    $headers = ['S/N', 'Key Person', 'Role / Title', 'Client', 'Client Category', 'Location', 'Email', 'Phone', 'PMS Assignment(s)', 'Gift Lists', 'Status', 'Last Updated'];
     $columns = [
         ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'], ['key' => 'key_person'], ['key' => 'title'], ['key' => 'clients_name'],
-        ['key' => 'clients_category'], ['key' => 'clients_hq_location'], ['key' => 'key_persons_email'], ['key' => 'key_persons_tel'], ['key' => 'owner_name'],
+        ['key' => 'clients_category'], ['key' => 'clients_hq_location'], ['key' => 'key_persons_email'], ['key' => 'key_persons_tel'], ['key' => 'assignment_names'],
         ['key' => 'gift_list_count', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'], ['key' => 'status'], ['key' => 'updated_at', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
     ];
-    $dataSheet = dynabaseReportDataSheet('Key Person Network Report', 'Relationship contact register with client, ownership and gift-list participation', $headers, $rows, [7, 28, 24, 30, 22, 20, 30, 18, 22, 13, 12, 16], $columns);
+    $dataSheet = dynabaseReportDataSheet('Key Person Network Report', 'Relationship contacts with client, PMS assignments and gift-list participation', $headers, $rows, [7, 28, 24, 30, 22, 20, 30, 18, 28, 13, 12, 16], $columns);
     $dataSheet['name'] = 'Key Person Directory';
-    $summary = dynabaseReportSummarySheet('Key Person Network Summary', 'Relationship contacts grouped by client category, location, role and ownership', [
+    $summary = dynabaseReportSummarySheet('Key Person Network Summary', 'Relationship contacts grouped by client category, location, role and PMS assignment', [
         ['title' => 'By Client Category', 'headers' => ['Category', 'Count'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['clients_category'] ?? '')],
         ['title' => 'By Location', 'headers' => ['Location', 'Count'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['clients_hq_location'] ?? '')],
         ['title' => 'By Role / Title', 'headers' => ['Role / Title', 'Count'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['title'] ?? '')],
-        ['title' => 'By PMS Owner', 'headers' => ['PMS Owner', 'Count'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['owner_name'] ?? '')],
+        ['title' => 'By PMS Assignment', 'headers' => ['PMS Assignment', 'Count'], 'rows' => dynabaseReportCountBy($rows, static fn (array $r) => $r['assignment_names'] ?? '')],
     ]);
     $summary['name'] = 'Network Summary';
     return [$dataSheet, $summary];
 }
 
-function dynabaseReportOwnershipWorkbook(mysqli $conn): array
+function dynabaseReportOwnershipWorkbook(mysqli $conn, array $authUser = []): array
 {
+    $where = " WHERE (u.role = 'pms_admin' OR u.is_pms_admin = 1)";
+    $types = '';
+    $params = [];
+    if (!userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
+        $ownerId = resolveOwnerPmsAdminId($authUser);
+        if ($ownerId === null || $ownerId <= 0) {
+            $where .= ' AND 1 = 0';
+        } else {
+            $where .= ' AND u.id = ?';
+            $types = 'i';
+            $params[] = $ownerId;
+        }
+    }
+
     $rows = dbFetchAll(
         $conn,
         "SELECT u.id,
@@ -636,13 +732,17 @@ function dynabaseReportOwnershipWorkbook(mysqli $conn): array
                 u.is_pms_admin,
                 u.status,
                 (SELECT COUNT(*) FROM clients_table c WHERE c.owner_pms_admin_id = u.id AND c.status = 'active') AS active_clients,
-                (SELECT COUNT(*) FROM keypersons_table k WHERE k.owner_pms_admin_id = u.id AND k.status = 'active') AS active_keypersons,
+                (SELECT COUNT(*) FROM keyperson_pms_assignments kpa
+                 INNER JOIN keypersons_table k ON k.id = kpa.keyperson_id
+                 WHERE kpa.pms_admin_id = u.id AND k.status = 'active') AS active_keypersons,
                 (SELECT COUNT(*) FROM gift_lists gl WHERE gl.owner_pms_admin_id = u.id) AS gift_lists,
                 (SELECT COUNT(*) FROM gift_list_items gli INNER JOIN gift_lists gl2 ON gl2.id = gli.gift_list_id WHERE gl2.owner_pms_admin_id = u.id AND gli.gift_decision = 'selected') AS gift_recipients,
                 (SELECT COUNT(*) FROM users child WHERE child.parent_pms_admin_id = u.id AND child.status = 'active') AS team_members
          FROM users u
-         WHERE u.role = 'pms_admin' OR u.is_pms_admin = 1
-         ORDER BY owner_name ASC"
+         {$where}
+         ORDER BY owner_name ASC",
+        $types,
+        $params
     );
     foreach ($rows as $index => $_) $rows[$index]['serial'] = $index + 1;
     $headers = ['S/N', 'PMS Owner', 'Email', 'Workspace Role', 'PMS Enabled', 'Active Clients', 'Active Key Persons', 'Gift Lists', 'Gift Recipients', 'Team Members', 'Status'];
@@ -655,7 +755,7 @@ function dynabaseReportOwnershipWorkbook(mysqli $conn): array
         ['key' => 'gift_recipients', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'],
         ['key' => 'team_members', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'], ['key' => 'status'],
     ];
-    $dataSheet = dynabaseReportDataSheet('PMS Ownership Report', 'Ownership coverage across clients, key persons, gift lists and assigned users', $headers, $rows, [7, 25, 30, 16, 14, 15, 18, 13, 17, 14, 12], $columns);
+    $dataSheet = dynabaseReportDataSheet('PMS Ownership Report', 'Ownership coverage across clients, assigned key persons, gift lists and assigned users', $headers, $rows, [7, 25, 30, 16, 14, 15, 18, 13, 17, 14, 12], $columns);
     $dataSheet['name'] = 'Ownership Summary';
     return [$dataSheet];
 }
@@ -1431,11 +1531,28 @@ function dynabaseReportCatalog(mysqli $conn, array $authUser): array
         );
     }
 
+    [$giftCatalogScope, $giftCatalogTypes, $giftCatalogParams] = appendScopedWhere($authUser, 'gl');
+    $giftRecordCount = $count(
+        "SELECT COUNT(*) AS total FROM gift_list_items gli INNER JOIN gift_lists gl ON gl.id = gli.gift_list_id WHERE gli.gift_decision = 'selected'{$giftCatalogScope}",
+        $giftCatalogTypes,
+        $giftCatalogParams
+    );
+    [$clientCatalogScope, $clientCatalogTypes, $clientCatalogParams] = appendScopedWhere($authUser, 'c');
+    $clientRecordCount = $count("SELECT COUNT(*) AS total FROM clients_table c WHERE 1 = 1{$clientCatalogScope}", $clientCatalogTypes, $clientCatalogParams);
+    [$keypersonCatalogScope, $keypersonCatalogTypes, $keypersonCatalogParams] = appendKeypersonScopedWhere($authUser, 'k');
+    $keypersonRecordCount = $count("SELECT COUNT(*) AS total FROM keypersons_table k WHERE 1 = 1{$keypersonCatalogScope}", $keypersonCatalogTypes, $keypersonCatalogParams);
+    if (userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN])) {
+        $pmsOwnerRecordCount = $count("SELECT COUNT(*) AS total FROM users WHERE role = 'pms_admin' OR is_pms_admin = 1");
+    } else {
+        $visibleOwnerId = resolveOwnerPmsAdminId($authUser);
+        $pmsOwnerRecordCount = $visibleOwnerId !== null && $visibleOwnerId > 0 ? 1 : 0;
+    }
+
     $definitions = [
         [
             'key' => 'gift-lists', 'title' => 'Annual Gift List',
             'description' => 'Multi-sheet workbook with recipient data, consolidated A–D counts and location analysis.',
-            'record_count' => $count("SELECT COUNT(*) AS total FROM gift_list_items WHERE gift_decision = 'selected'"),
+            'record_count' => $giftRecordCount,
             'year_filter' => true, 'sheets' => 3,
         ],
         [
@@ -1447,19 +1564,19 @@ function dynabaseReportCatalog(mysqli $conn, array $authUser): array
         [
             'key' => 'clients', 'title' => 'Client Directory',
             'description' => 'Client ownership, location, category, status and key-person reach.',
-            'record_count' => $count('SELECT COUNT(*) AS total FROM clients_table'),
+            'record_count' => $clientRecordCount,
             'year_filter' => false, 'sheets' => 2,
         ],
         [
             'key' => 'keypersons', 'title' => 'Key Person Network',
-            'description' => 'Relationship contacts grouped by client, location, role and PMS ownership.',
-            'record_count' => $count('SELECT COUNT(*) AS total FROM keypersons_table'),
+            'description' => 'Relationship contacts grouped by client, location, role and PMS assignment.',
+            'record_count' => $keypersonRecordCount,
             'year_filter' => false, 'sheets' => 2,
         ],
         [
             'key' => 'pms-ownership', 'title' => 'PMS Ownership',
             'description' => 'Portfolio coverage across PMS owners, teams, clients, contacts and gift recipients.',
-            'record_count' => $count("SELECT COUNT(*) AS total FROM users WHERE role = 'pms_admin' OR is_pms_admin = 1"),
+            'record_count' => $pmsOwnerRecordCount,
             'year_filter' => false, 'sheets' => 1,
         ],
         [
@@ -1519,13 +1636,13 @@ function dynabaseReportCatalog(mysqli $conn, array $authUser): array
 function dynabaseReportOverview(mysqli $conn, array $authUser, int $giftYear = 0): array
 {
     $giftAccess = dynabaseReportAccessForUser($conn, $authUser, 'gift-lists');
-    $giftRows = $giftAccess['can_view'] ? dynabaseReportGiftRows($conn, $giftYear) : [];
+    $giftRows = $giftAccess['can_view'] ? dynabaseReportGiftRows($conn, $giftYear, $authUser) : [];
     $giftAnalytics = dynabaseReportGiftAnalytics($giftRows);
     $giftAnalytics['can_view'] = $giftAccess['can_view'];
     $giftAnalytics['can_export'] = $giftAccess['can_export'];
 
     return [
-        'available_years' => $giftAccess['can_view'] ? dynabaseReportAvailableGiftYears($conn) : [],
+        'available_years' => $giftAccess['can_view'] ? dynabaseReportAvailableGiftYears($conn, $authUser) : [],
         'selected_year' => $giftYear > 0 ? $giftYear : 'all',
         'catalog' => dynabaseReportCatalog($conn, $authUser),
         'gift_list' => $giftAnalytics,
@@ -1536,11 +1653,11 @@ function dynabaseReportOverview(mysqli $conn, array $authUser, int $giftYear = 0
 function dynabaseReportWorkbook(mysqli $conn, string $type, int $giftYear = 0, array $authUser = [], array $filters = []): array
 {
     return match ($type) {
-        'gift-lists' => dynabaseReportGiftWorkbook(dynabaseReportGiftRows($conn, $giftYear), $giftYear),
-        'tenders' => dynabaseReportTenderWorkbook($conn, $giftYear),
-        'clients' => dynabaseReportClientWorkbook($conn),
-        'keypersons' => dynabaseReportKeypersonWorkbook($conn),
-        'pms-ownership' => dynabaseReportOwnershipWorkbook($conn),
+        'gift-lists' => dynabaseReportGiftWorkbook(dynabaseReportGiftRows($conn, $giftYear, $authUser), $giftYear),
+        'tenders' => dynabaseReportTenderWorkbook($conn, $giftYear, $authUser),
+        'clients' => dynabaseReportClientWorkbook($conn, $authUser),
+        'keypersons' => dynabaseReportKeypersonWorkbook($conn, $authUser),
+        'pms-ownership' => dynabaseReportOwnershipWorkbook($conn, $authUser),
         'client-surveys' => dynabaseReportSurveyWorkbook($conn),
         'prequalifications' => dynabaseReportPrequalificationWorkbook($conn),
         'submission-register' => dynabaseReportSubmissionWorkbook($conn, $authUser),

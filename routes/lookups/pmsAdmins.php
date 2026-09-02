@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/ownership.php';
 require_once __DIR__ . '/../../includes/lookup.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
@@ -12,10 +13,39 @@ $authUser = authenticateUser();
 $q = lookupSearchTerm();
 $limit = lookupLimit(500, 500);
 $offset = lookupOffset();
+$role = userRole($authUser);
 
 $where = " WHERE status = 'active' AND (role = 'pms_admin' OR is_pms_admin = 1)";
 $types = '';
 $params = [];
+
+$canViewFullDirectory = userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN, DYNABASE_ROLE_ADMIN]);
+$restrictedPmsAdminId = null;
+
+if (!$canViewFullDirectory) {
+    if (userActsAsPmsAdmin($authUser)) {
+        $restrictedPmsAdminId = (int) ($authUser['id'] ?? 0);
+    } elseif ($role === DYNABASE_ROLE_PMS_USER) {
+        $restrictedPmsAdminId = (int) ($authUser['parent_pms_admin_id'] ?? 0);
+    } elseif ($role === DYNABASE_ROLE_USER) {
+        // A normal user only receives the directory when an explicit workflow
+        // permission requires selecting a PMS ownership/contact assignment.
+        $canViewFullDirectory = userHasPermission($conn, $authUser, 'clients.create')
+            || userHasPermission($conn, $authUser, 'clients.edit')
+            || userHasPermission($conn, $authUser, 'keypersons.create')
+            || userHasPermission($conn, $authUser, 'keypersons.edit');
+    }
+}
+
+if (!$canViewFullDirectory && ($restrictedPmsAdminId === null || $restrictedPmsAdminId <= 0)) {
+    lookupResponse('PMS Admin lookup retrieved successfully.', [], $limit, $offset, 0);
+}
+
+if (!$canViewFullDirectory) {
+    $where .= ' AND id = ?';
+    $types .= 'i';
+    $params[] = $restrictedPmsAdminId;
+}
 
 if ($q !== '') {
     $where .= ' AND (first_name LIKE ? OR last_name LIKE ? OR email LIKE ?)';

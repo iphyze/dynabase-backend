@@ -39,7 +39,7 @@ $canViewGiftLists = userHasPermission($conn, $authUser, 'gift_lists.view');
 
 $keypersons = [];
 if ($canViewKeypersons) {
-    [$keypersonScopeSql, $keypersonTypes, $keypersonParams] = appendScopedWhere($authUser, 'k', 'i', [$id]);
+    [$keypersonScopeSql, $keypersonTypes, $keypersonParams] = appendKeypersonScopedWhere($authUser, 'k', 'i', [$id]);
     $giftSelect = $canViewGiftLists
         ? 'k.gift_status, k.gift_type'
         : 'NULL AS gift_status, NULL AS gift_type';

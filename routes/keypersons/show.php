@@ -12,13 +12,11 @@ $authUser = authenticateUser();
 $id = requiredIntFromRequest('id');
 assertKeypersonAccessible($conn, $authUser, $id, true);
 
-[$scopeSql, $scopeTypes, $scopeParams] = appendScopedWhere($authUser, 'k', 'i', [$id]);
+[$scopeSql, $scopeTypes, $scopeParams] = appendKeypersonScopedWhere($authUser, 'k', 'i', [$id]);
 $keyperson = dbFetchOne(
     $conn,
-    "SELECT k.*, NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), '') AS owner_pms_admin_name,
-            u.email AS owner_pms_admin_email
+    "SELECT k.*
      FROM keypersons_table k
-     LEFT JOIN users u ON u.id = k.owner_pms_admin_id
      WHERE k.id = ?{$scopeSql}
      LIMIT 1",
     $scopeTypes,
@@ -28,6 +26,29 @@ $keyperson = dbFetchOne(
 if (!$keyperson) {
     throw new RuntimeException('Keyperson not found or not accessible.', 404);
 }
+
+$assignments = keypersonPmsAssignments($conn, $authUser, $id);
+$keyperson['pms_assignments'] = $assignments;
+$keyperson['pms_assignment_visibility'] = userHasRole($authUser, [
+    DYNABASE_ROLE_SUPER_ADMIN,
+    DYNABASE_ROLE_ADMIN,
+    DYNABASE_ROLE_PMS_ADMIN,
+    DYNABASE_ROLE_PMS_USER,
+]);
+if (count($assignments) === 1) {
+    $keyperson['owner_pms_admin_id'] = $assignments[0]['id'];
+    $keyperson['owner_pms_admin_name'] = $assignments[0]['name'];
+    $keyperson['owner_pms_admin_email'] = $assignments[0]['email'];
+} elseif (count($assignments) > 1) {
+    $keyperson['owner_pms_admin_id'] = null;
+    $keyperson['owner_pms_admin_name'] = implode(', ', array_column($assignments, 'name'));
+    $keyperson['owner_pms_admin_email'] = null;
+} else {
+    $keyperson['owner_pms_admin_id'] = null;
+    $keyperson['owner_pms_admin_name'] = null;
+    $keyperson['owner_pms_admin_email'] = null;
+}
+unset($keyperson['normalized_name'], $keyperson['normalized_phone'], $keyperson['normalized_email']);
 
 $canViewLogs = userHasPermission($conn, $authUser, 'influence_logs.view');
 $canViewGiftLists = userHasPermission($conn, $authUser, 'gift_lists.view');
@@ -70,11 +91,24 @@ if ($canViewGiftLists) {
         $giftParams
     );
 
-    foreach ($giftHistory as $giftEntry) {
-        if ((int) $giftEntry['gift_year'] === (int) date('Y')) {
-            $currentYearGift = $giftEntry;
-            break;
-        }
+    $currentYearEntries = array_values(array_filter(
+        $giftHistory,
+        static fn (array $giftEntry): bool => (int) $giftEntry['gift_year'] === (int) date('Y')
+    ));
+    $selectedCurrentYearEntries = array_values(array_filter(
+        $currentYearEntries,
+        static fn (array $giftEntry): bool => (string) ($giftEntry['gift_decision'] ?? '') === 'selected'
+    ));
+
+    if ($selectedCurrentYearEntries !== []) {
+        $currentYearGift = $selectedCurrentYearEntries[0];
+        $selectedRates = array_values(array_unique(array_filter(
+            array_map(static fn (array $giftEntry): string => trim((string) ($giftEntry['gift_rate'] ?? '')), $selectedCurrentYearEntries),
+            static fn (string $rate): bool => $rate !== ''
+        )));
+        $currentYearGift['gift_rate'] = count($selectedRates) === 1 ? $selectedRates[0] : null;
+    } elseif ($currentYearEntries !== []) {
+        $currentYearGift = $currentYearEntries[0];
     }
 
     $keyperson['gift_status'] = ($currentYearGift['gift_decision'] ?? '') === 'selected' ? 'Yes' : 'No';

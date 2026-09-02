@@ -31,20 +31,14 @@ dbExecute(
     $recordParams
 )->close();
 
-// Soft-hide only linked key persons inside the actor's ownership scope.
-[$keypersonScopeSql, $keypersonTypes, $keypersonParams] = appendScopedWhere(
-    $authUser,
-    '',
-    'sii',
-    [$actorEmail, $actorId, $id]
-);
+// Client status is authoritative for every canonical Key Person linked to it.
 dbExecute(
     $conn,
     "UPDATE keypersons_table
      SET status = 'deactivated', updated_by = ?, updated_by_id = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE clients_id = ?{$keypersonScopeSql}",
-    $keypersonTypes,
-    $keypersonParams
+     WHERE clients_id = ?",
+    'sii',
+    [$actorEmail, $actorId, $id]
 )->close();
 
 writeAuditLog($conn, $authUser, 'client.deactivated', 'client', $id, [
