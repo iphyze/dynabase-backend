@@ -12,6 +12,8 @@ $city = cleanString($_GET['city'] ?? '');
 $division = cleanString($_GET['division'] ?? '');
 $status = cleanString($_GET['status'] ?? '');
 $progress = cleanString($_GET['progress'] ?? '');
+$dateFrom = cleanString($_GET['date_from'] ?? '');
+$dateTo = cleanString($_GET['date_to'] ?? '');
 $includeInactive = userHasRole($authUser, [DYNABASE_ROLE_SUPER_ADMIN]) && cleanString($_GET['include_inactive'] ?? '') === '1';
 
 $allowedSorts = [
@@ -74,6 +76,26 @@ if ($division !== '' && $division !== 'all') {
     $where .= ' AND p.`division` = ?';
     $types .= 's';
     $params[] = $division;
+}
+
+if ($dateFrom !== '') {
+    $fromTs = strtotime($dateFrom);
+    if ($fromTs === false) {
+        throw new RuntimeException('date_from must be a valid date.', 422);
+    }
+    $where .= ' AND p.`created_at` >= ?';
+    $types .= 's';
+    $params[] = date('Y-m-d 00:00:00', $fromTs);
+}
+
+if ($dateTo !== '') {
+    $toTs = strtotime($dateTo);
+    if ($toTs === false) {
+        throw new RuntimeException('date_to must be a valid date.', 422);
+    }
+    $where .= ' AND p.`created_at` <= ?';
+    $types .= 's';
+    $params[] = date('Y-m-d 23:59:59', $toTs);
 }
 
 if ($status !== '' && $status !== 'all') {

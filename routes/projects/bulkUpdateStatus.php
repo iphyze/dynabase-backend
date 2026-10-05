@@ -35,6 +35,22 @@ if ($accessible === []) {
     throw new RuntimeException('No selected tenders are available for status update.', 404);
 }
 
+$lostTransitions = [];
+foreach ($accessible as $row) {
+    $triggerFields = [];
+    if ($newStatus !== null && isLostProjectStatus($newStatus) && !isLostProjectStatus($row['project_status'] ?? '')) {
+        $triggerFields[] = 'status';
+    }
+    if ($newProgress !== null && isLostProjectProgress($newProgress) && !isLostProjectProgress($row['progress'] ?? '')) {
+        $triggerFields[] = 'progress';
+    }
+    if ($triggerFields !== []) {
+        $row['_lost_trigger_fields'] = $triggerFields;
+        $lostTransitions[] = $row;
+    }
+}
+$lossComment = normalizeProjectLossComment($payload, $lostTransitions !== []);
+
 $accessibleCodes = array_map(static fn (array $row): int => (int) $row['code'], $accessible);
 $accessiblePlaceholders = projectCodesPlaceholders($accessibleCodes);
 $actorEmail = actorEmail($authUser);
@@ -79,6 +95,17 @@ try {
             }
             syncAwardedProjectCode($conn, $authUser, $row);
         }
+    }
+
+    foreach ($lostTransitions as $row) {
+        writeProjectLossComment($conn, $authUser, (int) $row['code'], $lossComment, [
+            'previous_status' => (string) ($row['project_status'] ?? ''),
+            'previous_progress' => (string) ($row['progress'] ?? ''),
+            'project_status' => $newStatus ?? (string) ($row['project_status'] ?? ''),
+            'progress' => $newProgress ?? (string) ($row['progress'] ?? ''),
+            'trigger_fields' => $row['_lost_trigger_fields'] ?? [],
+            'source' => 'bulk-update',
+        ]);
     }
 
     writeAuditLog($conn, $authUser, 'project.bulk_status_updated', 'project', null, [

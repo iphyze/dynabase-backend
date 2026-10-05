@@ -19,6 +19,7 @@ const DYNABASE_PROJECT_STATUSES = [
     'Declined',
     'Awarded',
     'Abortive',
+    'Lost',
 ];
 
 const DYNABASE_PROJECT_PROGRESS = [
@@ -31,6 +32,7 @@ const DYNABASE_PROJECT_PROGRESS = [
     'Declined',
     'Awarded',
     'Abortive',
+    'Lost',
 ];
 
 function projectCountryCode(string $country): string
@@ -100,6 +102,86 @@ function normalizeProjectProgress(string $progress, string $fallback = 'Pending'
     }
 
     throw new RuntimeException('Invalid tender progress selected.', 422);
+}
+
+function isLostProjectStatus(?string $status): bool
+{
+    return strcasecmp(trim((string) $status), 'Lost') === 0;
+}
+
+function isLostProjectProgress(?string $progress): bool
+{
+    return strcasecmp(trim((string) $progress), 'Lost') === 0;
+}
+
+function normalizeProjectLossComment(array $payload, bool $required = false): string
+{
+    $comment = optionalStringField($payload, 'lost_comment', 2000);
+    if ($required && $comment === '') {
+        throw new RuntimeException('Please add a comment explaining why this tender was lost.', 422);
+    }
+    return $comment;
+}
+
+function writeProjectLossComment(mysqli $conn, array $authUser, int $code, string $comment, array $context = []): void
+{
+    if (trim($comment) === '') {
+        return;
+    }
+
+    $triggerFields = array_values(array_filter(
+        array_map(static fn ($field): string => cleanString($field), (array) ($context['trigger_fields'] ?? [])),
+        static fn (string $field): bool => in_array($field, ['status', 'progress'], true)
+    ));
+
+    writeAuditLog($conn, $authUser, 'project.lost', 'project', (string) $code, [
+        'comment' => trim($comment),
+        'previous_status' => cleanString($context['previous_status'] ?? ''),
+        'previous_progress' => cleanString($context['previous_progress'] ?? ''),
+        'project_status' => cleanString($context['project_status'] ?? ''),
+        'progress' => cleanString($context['progress'] ?? ''),
+        'trigger_fields' => $triggerFields,
+        'source' => cleanString($context['source'] ?? 'tender'),
+    ]);
+}
+
+function loadProjectLossComments(mysqli $conn, int $code): array
+{
+    $rows = dbFetchAll(
+        $conn,
+        "SELECT a.`id`, a.`metadata`, a.`created_at`,
+                NULLIF(TRIM(CONCAT(COALESCE(u.`first_name`, ''), ' ', COALESCE(u.`last_name`, ''))), '') AS actor_name,
+                u.`email` AS actor_email
+         FROM `audit_logs` a
+         LEFT JOIN `users` u ON u.`id` = a.`actor_user_id`
+         WHERE a.`entity_type` = 'project'
+           AND a.`entity_id` = ?
+           AND a.`action` IN ('project.progress_lost', 'project.status_lost', 'project.lost')
+         ORDER BY a.`created_at` DESC, a.`id` DESC
+         LIMIT 50",
+        's',
+        [(string) $code]
+    );
+
+    $comments = [];
+    foreach ($rows as $row) {
+        $metadata = json_decode((string) ($row['metadata'] ?? ''), true);
+        $comment = trim((string) ($metadata['comment'] ?? ''));
+        if ($comment === '') {
+            continue;
+        }
+        $comments[] = [
+            'id' => (int) $row['id'],
+            'comment' => $comment,
+            'previous_status' => cleanString($metadata['previous_status'] ?? ''),
+            'previous_progress' => cleanString($metadata['previous_progress'] ?? ''),
+            'trigger_fields' => is_array($metadata['trigger_fields'] ?? null) ? array_values($metadata['trigger_fields']) : [],
+            'created_at' => $row['created_at'] ?? null,
+            'actor_name' => cleanString($row['actor_name'] ?? '') ?: cleanString($row['actor_email'] ?? '') ?: 'System user',
+        ];
+    }
+
+    return $comments;
 }
 
 function normalizeOptionalDate(array $payload, string $field): string
@@ -527,6 +609,7 @@ function projectResponsePayload(mysqli $conn, array $authUser, array $project, b
 
     if ($withRelations) {
         $project['relations'] = loadProjectRelations($conn, $authUser, (int) $project['code']);
+        $project['loss_comments'] = loadProjectLossComments($conn, (int) $project['code']);
     }
 
     return $project;

@@ -10,6 +10,10 @@ $code = requiredIntFromPayload($payload, 'code', 'Tender code');
 
 $existing = assertProjectAccessible($conn, $authUser, $code, true);
 $project = normalizeProjectPayload($payload, true);
+$lostStatusTransition = !isLostProjectStatus($existing['project_status'] ?? '') && isLostProjectStatus($project['project_status']);
+$lostProgressTransition = !isLostProjectProgress($existing['progress'] ?? '') && isLostProjectProgress($project['progress']);
+$becameLost = $lostStatusTransition || $lostProgressTransition;
+$lossComment = normalizeProjectLossComment($payload, $becameLost);
 $clients = array_key_exists('clients', $payload) || array_key_exists('project_clients', $payload) || array_key_exists('clients_name', $payload)
     ? normalizeProjectClients($payload, true)
     : null;
@@ -93,6 +97,20 @@ try {
             'technical_documents' => $technicalDocuments !== null,
         ],
     ]);
+
+    if ($becameLost) {
+        $triggerFields = [];
+        if ($lostStatusTransition) { $triggerFields[] = 'status'; }
+        if ($lostProgressTransition) { $triggerFields[] = 'progress'; }
+        writeProjectLossComment($conn, $authUser, $code, $lossComment, [
+            'previous_status' => (string) ($existing['project_status'] ?? ''),
+            'previous_progress' => (string) ($existing['progress'] ?? ''),
+            'project_status' => $project['project_status'],
+            'progress' => $project['progress'],
+            'trigger_fields' => $triggerFields,
+            'source' => 'update',
+        ]);
+    }
 
     $conn->commit();
 } catch (Throwable $exception) {

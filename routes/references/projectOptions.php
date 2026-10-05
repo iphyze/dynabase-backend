@@ -31,6 +31,7 @@ jsonResponse([
             ['value' => 'Awaiting', 'label' => 'Feedbacks'],
             ['value' => 'Declined', 'label' => 'Declined'],
             ['value' => 'Awarded', 'label' => 'Awarded'],
+            ['value' => 'Lost', 'label' => 'Lost'],
         ],
         'currencies' => [
             ['value' => 'NGN', 'label' => 'Naira'],

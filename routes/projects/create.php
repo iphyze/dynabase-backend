@@ -8,6 +8,8 @@ $authUser = authenticateUser();
 $payload = readJsonBody();
 
 $project = normalizeProjectPayload($payload, false);
+$lostOnCreate = isLostProjectStatus($project['project_status']) || isLostProjectProgress($project['progress']);
+$lossComment = normalizeProjectLossComment($payload, $lostOnCreate);
 $clients = normalizeProjectClients($payload, true);
 $tenderDocuments = normalizeDocumentRows($payload, 'tender_documents', 'tender_document', 'tender documents');
 $technicalDocuments = normalizeDocumentRows($payload, 'technical_documents', 'technical_document', 'technical documents');
@@ -71,6 +73,18 @@ try {
         'tender_documents_count' => count($tenderDocuments),
         'technical_documents_count' => count($technicalDocuments),
     ]);
+
+    if ($lostOnCreate) {
+        $triggerFields = [];
+        if (isLostProjectStatus($project['project_status'])) { $triggerFields[] = 'status'; }
+        if (isLostProjectProgress($project['progress'])) { $triggerFields[] = 'progress'; }
+        writeProjectLossComment($conn, $authUser, $code, $lossComment, [
+            'project_status' => $project['project_status'],
+            'progress' => $project['progress'],
+            'trigger_fields' => $triggerFields,
+            'source' => 'create',
+        ]);
+    }
 
     $conn->commit();
 } catch (Throwable $exception) {
