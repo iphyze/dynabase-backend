@@ -43,17 +43,8 @@ $requestedOwner = array_key_exists('owner_pms_admin_id', $payload)
         );
 $ownerPmsAdminId = resolveClientOwnerPmsAdminId($conn, $authUser, $requestedOwner);
 
-[$dupOwnerSql, $dupOwnerTypes, $dupOwnerParams] = ownerDuplicateSql($ownerPmsAdminId, 'c');
-$duplicate = dbFetchOne(
-    $conn,
-    "SELECT id FROM clients_table c WHERE c.id <> ? AND LOWER(TRIM(c.clients_name)) = LOWER(TRIM(?)) AND c.status <> 'deactivated'{$dupOwnerSql} LIMIT 1",
-    'is' . $dupOwnerTypes,
-    array_merge([$id, $clientsName], $dupOwnerParams)
-);
-
-if ($duplicate) {
-    throw new RuntimeException('Another client with this name already exists within this PMS ownership scope.', 409);
-}
+// One shared client directory across every PMS Admin.
+assertClientNameAvailable($conn, $clientsName, $id);
 
 $actorEmail = actorEmail($authUser);
 $actorId = (int) $authUser['id'];
@@ -128,6 +119,9 @@ try {
     $conn->commit();
 } catch (Throwable $exception) {
     $conn->rollback();
+    if (isDuplicateKeyError($exception)) {
+        assertClientNameAvailable($conn, $clientsName, $id);
+    }
     throw $exception;
 }
 

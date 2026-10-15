@@ -207,3 +207,64 @@ function actorEmail(array $authUser): string
 {
     return strtolower(trim((string) ($authUser['email'] ?? '')));
 }
+
+/** Case- and spacing-insensitive client name, identical to the generated clients_table.normalized_name column
+ *  (LOWER(TRIM(REGEXP_REPLACE(clients_name, '[[:space:]]+', ' ')))) that carries the unique key. */
+function normalizeClientName(string $name): string
+{
+    $name = preg_replace('/\s+/u', ' ', trim($name)) ?? trim($name);
+    return function_exists('mb_strtolower') ? mb_strtolower($name, 'UTF-8') : strtolower($name);
+}
+
+/**
+ * Clients are one shared directory across every PMS Admin: a name may exist only once
+ * (active or deactivated). Throws a 409 that names the existing record so the user can pick it.
+ */
+function assertClientNameAvailable(mysqli $conn, string $clientsName, ?int $excludeId = null): void
+{
+    $types = 's';
+    $params = [normalizeClientName($clientsName)];
+    $exclude = '';
+    if ($excludeId !== null && $excludeId > 0) {
+        $exclude = ' AND c.id <> ?';
+        $types .= 'i';
+        $params[] = $excludeId;
+    }
+    $existing = dbFetchOne(
+        $conn,
+        "SELECT c.id, c.clients_name, c.status, c.owner_pms_admin_id,
+                NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), '') AS owner_name
+         FROM clients_table c
+         LEFT JOIN users u ON u.id = c.owner_pms_admin_id
+         WHERE c.normalized_name = ?{$exclude}
+         LIMIT 1",
+        $types,
+        $params
+    );
+    if (!$existing) {
+        return;
+    }
+    $name = (string) $existing['clients_name'];
+    $message = (string) $existing['status'] === 'active'
+        ? sprintf('"%s" already exists in Dynabase%s. Select the existing client instead of creating a new one.',
+            $name, $existing['owner_name'] ? ' (managed by ' . $existing['owner_name'] . ')' : '')
+        : sprintf('"%s" already exists in Dynabase but is deactivated. Ask an administrator to reactivate it.', $name);
+
+    jsonResponse([
+        'status' => 'DuplicateClient',
+        'message' => $message,
+        'data' => ['existing_client' => [
+            'id' => (int) $existing['id'],
+            'clients_name' => $name,
+            'status' => (string) $existing['status'],
+            'owner_pms_admin_id' => $existing['owner_pms_admin_id'] !== null ? (int) $existing['owner_pms_admin_id'] : null,
+            'owner_name' => $existing['owner_name'],
+        ]],
+    ], 409);
+}
+
+/** Turns the database's unique-name guard (concurrent saves) into the same friendly 409. */
+function isDuplicateKeyError(Throwable $exception): bool
+{
+    return $exception instanceof mysqli_sql_exception && (int) $exception->getCode() === 1062;
+}

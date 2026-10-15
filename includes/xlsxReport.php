@@ -427,3 +427,48 @@ function dynabaseOutputXlsx(string $filename, array $sheets, array $properties =
 
     exit;
 }
+
+/**
+ * Simple table export (header row + data rows) as a real Excel workbook.
+ * Replaces the old CSV downloads: CSV opened in Excel turned phone numbers into numbers (dropping the
+ * leading 0 / +, rounding long ones) and garbled accented names. Here every value is written as a text
+ * cell unless it is a genuine PHP int/float, so "08031234567" and "+234 803 ..." stay exactly as stored.
+ */
+function dynabaseOutputTableXlsx(string $filename, string $sheetName, array $headers, array $rows): never
+{
+    $filename = preg_replace('/\.csv$/i', '.xlsx', $filename) ?? $filename;
+    $headerRow = array_map(
+        static fn ($label): array => ['value' => (string) $label, 'style' => DYNABASE_XLSX_STYLE_HEADER],
+        array_values($headers)
+    );
+    $sheetRows = [$headerRow];
+    $widths = array_map(static fn ($label): int => mb_strlen((string) $label) + 4, array_values($headers));
+
+    foreach (array_values($rows) as $index => $row) {
+        $style = $index % 2 === 0 ? DYNABASE_XLSX_STYLE_BODY : DYNABASE_XLSX_STYLE_BODY_ALT;
+        $cells = [];
+        foreach (array_values($row) as $column => $value) {
+            if (is_int($value) || is_float($value)) {
+                $cells[] = ['value' => $value, 'style' => $style, 'type' => 'number'];
+            } else {
+                $text = $value === null ? '' : (string) $value;   // text cell: phones keep 0 / + exactly
+                $cells[] = ['value' => $text, 'style' => $style];
+                if ($index < 300) {
+                    $widths[$column] = max($widths[$column] ?? 10, min(60, mb_strlen($text) + 2));
+                }
+            }
+        }
+        $sheetRows[] = $cells;
+    }
+
+    $lastColumn = dynabaseXlsxColumnLetter(max(1, count($headers)));
+    dynabaseOutputXlsx($filename, [[
+        'name' => $sheetName,
+        'rows' => $sheetRows,
+        'widths' => array_map(static fn ($w): int => max(10, (int) $w), $widths),
+        'freezeRows' => 1,
+        'autoFilter' => 'A1:' . $lastColumn . max(1, count($sheetRows)),
+        'landscape' => true,
+        'showGridLines' => true,
+    ]], ['title' => $sheetName, 'subject' => 'Dynabase export']);
+}

@@ -124,6 +124,7 @@ function applyApiSecurityHeaders(): void
         header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
         header('Access-Control-Allow-Headers: Content-Type, X-CSRF-Token');
         header('Access-Control-Max-Age: 600');
+        header('Access-Control-Expose-Headers: Content-Disposition');
         header('Vary: Origin');
     }
 

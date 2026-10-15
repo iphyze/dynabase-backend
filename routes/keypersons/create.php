@@ -32,6 +32,7 @@ $clientId = (int) $client['id'];
 $keyPerson = requireStringField($payload, 'key_person', 'Keyperson name');
 $keyPersonTel = optionalStringField($payload, 'key_persons_tel');
 $keyPersonEmail = optionalEmailField($payload, 'key_persons_email', 'Keyperson email');
+assertRealKeypersonEmail($keyPersonEmail);
 $keyPersonAddress = composeAddressWithLocation(
     optionalStringField($payload, 'key_persons_address'),
     optionalStringField($payload, 'key_persons_city'),
@@ -52,14 +53,17 @@ $normalizedEmail = normalizeKeypersonEmail($keyPersonEmail);
 $legacyOwnerPmsAdminId = $assignmentPmsAdminId;
 $duplicate = null;
 $keypersonId = 0;
+$namesakes = [];
 $mutationLock = acquireKeypersonCanonicalMutationLock($conn);
 
 try {
     // Serialise identity mutations so concurrent creates cannot bypass the
     // application-level canonical duplicate check.
     $duplicate = findStrongKeypersonDuplicate($conn, $keyPerson, $clientId, $keyPersonTel, $keyPersonEmail);
+    // Same name as someone already in Dynabase, but no email/phone to tell the new person apart.
+    $namesakes = $duplicate ? [] : keypersonNamesakesWithoutIdentifier($conn, $keyPerson, $keyPersonTel, $keyPersonEmail);
 
-    if (!$duplicate) {
+    if (!$duplicate && $namesakes === []) {
         $conn->begin_transaction();
         try {
             $stmt = dbExecute(
@@ -108,6 +112,10 @@ try {
     }
 } finally {
     releaseKeypersonCanonicalMutationLock($conn, $mutationLock);
+}
+
+if ($namesakes !== []) {
+    respondKeypersonIdentifierRequired($keyPerson, $namesakes);
 }
 
 if ($duplicate) {

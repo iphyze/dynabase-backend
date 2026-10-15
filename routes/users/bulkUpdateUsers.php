@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/security.php';
 require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/permissions.php';
+require_once __DIR__ . '/../../includes/pmsReassignment.php';
 
 requireMethod('POST');
 
@@ -42,8 +43,43 @@ if ($action === 'update_role' && !in_array($newRole, DYNABASE_ROLES, true)) {
     throw new RuntimeException('Please choose a valid role.', 422);
 }
 
+// A role change that removes PMS capability from users who own records needs a hand-over target.
+$reassignToPmsAdminId = null;
+$pmsDemotions = [];
+if ($action === 'update_role' && !userIsPmsCapable($newRole, $newRole === DYNABASE_ROLE_PMS_ADMIN ? 1 : 0)) {
+    foreach ($userIds as $candidateId) {
+        $candidate = dbFetchOne($conn,
+            'SELECT id, first_name, last_name, email, role, is_pms_admin, status, parent_pms_admin_id, invited_by, created_by, updated_by, last_login_at, created_at
+             FROM users WHERE id = ? LIMIT 1', 'i', [$candidateId]);
+        if (!$candidate) {
+            continue;
+        }
+        $candidate = normalizeUserRow($candidate);
+        if (!userIsPmsCapable((string) $candidate['role'], (int) $candidate['is_pms_admin'])
+            || !canAssignUserRole($actor, $candidate, $newRole)) {
+            continue;
+        }
+        $ownedCounts = pmsOwnedRecordCounts($conn, (int) $candidate['id']);
+        if ($ownedCounts['total'] > 0) {
+            $pmsDemotions[(int) $candidate['id']] = [
+                'id' => (int) $candidate['id'],
+                'name' => trim($candidate['first_name'] . ' ' . $candidate['last_name']),
+                'email' => $candidate['email'],
+                'counts' => $ownedCounts,
+            ];
+        }
+    }
+    if ($pmsDemotions !== []) {
+        if (empty($data['reassign_to_pms_admin_id'])) {
+            respondPmsReassignmentRequired($conn, array_values($pmsDemotions));
+        }
+        $reassignToPmsAdminId = resolvePmsReassignmentTarget($conn, $data['reassign_to_pms_admin_id'], array_keys($pmsDemotions));
+    }
+}
+
 $processed = 0;
 $skipped = 0;
+$reassignedTotals = ['clients' => 0, 'keypersons' => 0, 'gift_lists' => 0];
 $actorId = (int) $actor['id'];
 $conn->begin_transaction();
 try {
@@ -132,6 +168,17 @@ try {
             $stmt->close();
 
             replaceUserPermissions($conn, $userId, $resolvedPermissions, $actorId, $newRole);
+            if ($reassignToPmsAdminId !== null && isset($pmsDemotions[$userId])) {
+                $moved = reassignPmsOwnership($conn, $userId, $reassignToPmsAdminId, $actorId);
+                foreach ($reassignedTotals as $key => $value) {
+                    $reassignedTotals[$key] = $value + (int) ($moved[$key] ?? 0);
+                }
+                writeAuditLog($conn, $actor, 'users.pms_reassigned', 'user', $userId, [
+                    'target_email' => $target['email'],
+                    'to_pms_admin_id' => $reassignToPmsAdminId,
+                    'moved' => $moved,
+                ]);
+            }
             writeAuditLog($conn, $actor, 'users.bulk_update_role', 'user', $userId, [
                 'target_email' => $target['email'],
                 'previous_role' => $target['role'],
@@ -150,9 +197,13 @@ try {
 
 jsonResponse([
     'status' => 'Success',
-    'message' => "Bulk update completed. {$processed} user(s) updated" . ($skipped > 0 ? " and {$skipped} skipped." : '.'),
+    'message' => "Bulk update completed. {$processed} user(s) updated" . ($skipped > 0 ? " and {$skipped} skipped." : '.')
+        . ($reassignToPmsAdminId !== null
+            ? " {$reassignedTotals['clients']} client(s), {$reassignedTotals['keypersons']} contact(s) and {$reassignedTotals['gift_lists']} gift list(s) were handed over."
+            : ''),
     'data' => [
         'processed' => $processed,
         'skipped' => $skipped,
+        'reassigned' => $reassignToPmsAdminId !== null ? $reassignedTotals : null,
     ],
 ]);

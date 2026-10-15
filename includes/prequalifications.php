@@ -90,7 +90,7 @@ function normalizePrequalificationPayload(mysqli $conn, array $authUser, array $
     }
 
     return [
-        'clients_id' => $clientId,
+        'clients_id' => $clientId > 0 ? $clientId : null, // no client = free-text company (FK-safe)
         'clients_name' => $clientsName,
         'clients_address' => $clientsAddress,
         'clients_email' => $clientsEmail,

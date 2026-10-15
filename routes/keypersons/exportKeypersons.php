@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../../includes/xlsxReport.php';
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/ownership.php';
@@ -141,19 +142,15 @@ $rows = dbFetchAll(
     $params
 );
 
-$filename = 'dynabase-keypersons-' . ($canViewGiftLists ? $giftYear : 'directory') . '-' . date('Y-m-d') . '.csv';
-header('Content-Type: text/csv; charset=utf-8');
-header('Content-Disposition: attachment; filename="' . $filename . '"');
-header('Pragma: no-cache');
-header('Expires: 0');
-$output = fopen('php://output', 'w');
-fputcsv($output, [
+$filename = 'dynabase-keypersons-' . ($canViewGiftLists ? $giftYear : 'directory') . '-' . date('Y-m-d') . '.xlsx';
+$exportRows = [];
+$exportHeaders = ([
     'Client', 'Category', 'HQ Location', 'Key Person', 'Designation', 'Telephone', 'Email',
     'Address', 'Gift Year', 'Gift Decision', 'Gift Rate', 'Info', 'Status', 'PMS Assignment(s)', 'Created By', 'Updated By',
     'Created At', 'Updated At'
 ]);
 foreach ($rows as $row) {
-    fputcsv($output, [
+    $exportRows[] = ([
         $row['clients_name'] ?? '', $row['clients_category'] ?? '', $row['clients_hq_location'] ?? '',
         $row['key_person'] ?? '', $row['title'] ?? '', $row['key_persons_tel'] ?? '',
         $row['key_persons_email'] ?? '', $row['key_persons_address'] ?? '', $canViewGiftLists ? $giftYear : '',
@@ -162,5 +159,4 @@ foreach ($rows as $row) {
         $row['updated_by'] ?? '', $row['created_at'] ?? '', $row['updated_at'] ?? '',
     ]);
 }
-fclose($output);
-exit;
+dynabaseOutputTableXlsx($filename, 'Key Persons', $exportHeaders, $exportRows);

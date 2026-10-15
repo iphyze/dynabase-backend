@@ -20,6 +20,7 @@ $client = fetchClientRecordById($conn, $clientId, $clientId === (int) $existingK
 $keyPerson = requireStringField($payload, 'key_person', 'Keyperson name');
 $keyPersonTel = optionalStringField($payload, 'key_persons_tel');
 $keyPersonEmail = optionalEmailField($payload, 'key_persons_email', 'Keyperson email');
+assertRealKeypersonEmail($keyPersonEmail);
 $keyPersonAddress = composeAddressWithLocation(
     optionalStringField($payload, 'key_persons_address'),
     optionalStringField($payload, 'key_persons_city'),
@@ -41,12 +42,21 @@ $normalizedName = normalizeKeypersonName($keyPerson);
 $normalizedPhone = normalizeKeypersonPhone($keyPersonTel);
 $normalizedEmail = normalizeKeypersonEmail($keyPersonEmail);
 $duplicate = null;
+$namesakes = [];
 $mutationLock = acquireKeypersonCanonicalMutationLock($conn);
 
 try {
     $duplicate = findStrongKeypersonDuplicate($conn, $keyPerson, $clientId, $keyPersonTel, $keyPersonEmail, $id);
+    // Only when this edit is what makes the person indistinguishable from a namesake
+    // (renamed, or email and phone removed) - untouched legacy records stay editable.
+    $nameChanged = normalizeKeypersonName($keyPerson) !== normalizeKeypersonName((string) $existingKeyperson['key_person']);
+    $identifiersRemoved = (normalizeKeypersonEmail((string) ($existingKeyperson['key_persons_email'] ?? '')) !== null
+        || keypersonPhoneKeys((string) ($existingKeyperson['key_persons_tel'] ?? '')) !== []);
+    if (!$duplicate && ($nameChanged || $identifiersRemoved)) {
+        $namesakes = keypersonNamesakesWithoutIdentifier($conn, $keyPerson, $keyPersonTel, $keyPersonEmail, $id);
+    }
 
-    if (!$duplicate) {
+    if (!$duplicate && $namesakes === []) {
         [$recordScopeSql, $recordTypes, $recordParams] = appendKeypersonScopedWhere(
             $authUser,
             'keypersons_table',
@@ -106,6 +116,10 @@ try {
     }
 } finally {
     releaseKeypersonCanonicalMutationLock($conn, $mutationLock);
+}
+
+if ($namesakes !== []) {
+    respondKeypersonIdentifierRequired($keyPerson, $namesakes);
 }
 
 if ($duplicate) {

@@ -19,39 +19,43 @@ $excludeId = isset($payload['exclude_id']) ? (int) $payload['exclude_id'] : null
 $requestedOwnerId = isset($payload['owner_pms_admin_id']) ? (int) $payload['owner_pms_admin_id'] : null;
 
 $assignmentPmsAdminId = resolveKeypersonAssignmentPmsAdminId($conn, $authUser, $requestedOwnerId);
-$match = findStrongKeypersonDuplicate($conn, $keyPerson, $clientId, $keyPersonTel, $keyPersonEmail, $excludeId);
-$matchStrength = $match ? 'strong' : null;
+$rows = findKeypersonCandidates($conn, $keyPerson, $keyPersonTel, $keyPersonEmail, $excludeId, 5, $clientId);
 
-if (!$match && $keyPerson !== '') {
-    $match = findExactKeypersonNameMatch($conn, $keyPerson, $excludeId);
-    if ($match) {
-        $matchStrength = 'possible';
-    }
-}
-
-if (!$match) {
+if ($rows === []) {
     jsonResponse([
         'status' => 'Success',
         'message' => 'No matching Key Person found.',
-        'data' => ['match' => null],
+        'data' => ['match' => null, 'candidates' => []],
     ]);
 }
 
-$keypersonId = (int) $match['id'];
-$alreadyAssigned = keypersonHasPmsAssignment($conn, $keypersonId, $assignmentPmsAdminId);
-$assignmentToken = !$alreadyAssigned
-    ? keypersonAssignmentToken($authUser, $keypersonId, $assignmentPmsAdminId)
-    : null;
+// Every candidate carries its own "add to my contact list" token, so the user can pick
+// the right John Doe when several people share a name.
+$candidates = array_map(static function (array $row) use ($conn, $authUser, $assignmentPmsAdminId): array {
+    $keypersonId = (int) $row['id'];
+    $alreadyAssigned = keypersonHasPmsAssignment($conn, $keypersonId, $assignmentPmsAdminId);
+    return [
+        'match' => keypersonDuplicatePublicPayload($row),
+        'match_strength' => $row['match_strength'],
+        'already_in_contact_list' => $alreadyAssigned,
+        'assignment_token' => $alreadyAssigned ? null : keypersonAssignmentToken($authUser, $keypersonId, $assignmentPmsAdminId),
+    ];
+}, $rows);
 
+$best = $candidates[0];
 jsonResponse([
     'status' => 'Success',
-    'message' => $matchStrength === 'strong'
+    'message' => $best['match_strength'] === 'strong'
         ? 'This Key Person already exists in Dynabase.'
-        : 'A Key Person with the same name may already exist in Dynabase.',
+        : (count($candidates) > 1
+            ? sprintf('%d existing Key Persons have similar details. Check the email or phone to pick the right person.', count($candidates))
+            : 'A Key Person with similar details may already exist in Dynabase.'),
     'data' => [
-        'match' => keypersonDuplicatePublicPayload($match),
-        'match_strength' => $matchStrength,
-        'already_in_contact_list' => $alreadyAssigned,
-        'assignment_token' => $assignmentToken,
+        // first candidate kept at the top level for existing callers
+        'match' => $best['match'],
+        'match_strength' => $best['match_strength'],
+        'already_in_contact_list' => $best['already_in_contact_list'],
+        'assignment_token' => $best['assignment_token'],
+        'candidates' => $candidates,
     ],
 ]);

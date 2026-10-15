@@ -532,7 +532,7 @@ function replaceProjectClients(mysqli $conn, array $authUser, int $code, string 
         $updatedById = (int) $authUser['id'];
         $createdBy = actorEmail($authUser);
         $updatedBy = actorEmail($authUser);
-        $clientId = (int) $row['client_id'];
+        $clientId = (int) $row['client_id'] > 0 ? (int) $row['client_id'] : null; // free-text client = NULL (FK-safe)
         $clientName = $row['client_name'];
         $keyperson = $row['keyperson'];
 

@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../../includes/xlsxReport.php';
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/webOfInfluence.php';
 
@@ -78,12 +79,9 @@ $rows = dbFetchAll(
     $params
 );
 
-$filename = 'dynabase-web-of-influence-' . date('Y-m-d') . '.csv';
-header('Content-Type: text/csv; charset=utf-8');
-header('Content-Disposition: attachment; filename="' . $filename . '"');
-header('X-Content-Type-Options: nosniff');
-$output = fopen('php://output', 'wb');
-fputcsv($output, [
+$filename = 'dynabase-web-of-influence-' . date('Y-m-d') . '.xlsx';
+$exportRows = [];
+$exportHeaders = ([
     'Stakeholder', 'Role', 'Client', 'Tender/Project', 'Tender Code', 'DLP Period',
     'Project Director', 'Country Manager', 'Phone', 'Email', 'Authority',
     'Influence Level', 'Company Recommendation', 'Personal Win', 'Notes',
@@ -91,7 +89,7 @@ fputcsv($output, [
 ]);
 
 foreach ($rows as $row) {
-    fputcsv($output, [
+    $exportRows[] = ([
         $row['stakeholder_name'], $row['stakeholder_role'], $row['clients_name'],
         $row['project_title'], $row['tender_code'], $row['dlp_period'],
         $row['project_director'], $row['country_manager'], $row['phone'], $row['email'],
@@ -102,5 +100,4 @@ foreach ($rows as $row) {
     ]);
 }
 
-fclose($output);
-exit;
+dynabaseOutputTableXlsx($filename, 'Web of Influence', $exportHeaders, $exportRows);

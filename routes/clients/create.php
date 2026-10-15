@@ -27,21 +27,13 @@ $clientsCategory = requireStringField($payload, 'clients_category', 'Client cate
 $requestedOwnerPmsAdminId = isset($payload['owner_pms_admin_id']) ? (int) $payload['owner_pms_admin_id'] : null;
 $ownerPmsAdminId = resolveClientOwnerPmsAdminId($conn, $authUser, $requestedOwnerPmsAdminId);
 
-[$dupOwnerSql, $dupOwnerTypes, $dupOwnerParams] = ownerDuplicateSql($ownerPmsAdminId, 'c');
-$existing = dbFetchOne(
-    $conn,
-    "SELECT id FROM clients_table c WHERE LOWER(TRIM(c.clients_name)) = LOWER(TRIM(?)) AND c.status <> 'deactivated'{$dupOwnerSql} LIMIT 1",
-    's' . $dupOwnerTypes,
-    array_merge([$clientsName], $dupOwnerParams)
-);
-
-if ($existing) {
-    throw new RuntimeException('A client with this name already exists within this PMS ownership scope.', 409);
-}
+// One shared client directory across every PMS Admin.
+assertClientNameAvailable($conn, $clientsName);
 
 $actorEmail = actorEmail($authUser);
 $createdById = (int) $authUser['id'];
 
+try {
 $stmt = dbExecute(
     $conn,
     'INSERT INTO clients_table
@@ -65,6 +57,12 @@ $stmt = dbExecute(
 );
 $clientId = (int) $stmt->insert_id;
 $stmt->close();
+} catch (mysqli_sql_exception $exception) {
+    if (isDuplicateKeyError($exception)) {
+        assertClientNameAvailable($conn, $clientsName);   // responds 409 with the record that won the race
+    }
+    throw $exception;
+}
 
 writeAuditLog($conn, $authUser, 'client.created', 'client', $clientId, [
     'clients_name' => $clientsName,

@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/authorization.php';
 require_once __DIR__ . '/ownership.php';
 require_once __DIR__ . '/dbHelpers.php';
+require_once __DIR__ . '/keypersons.php';
 
 const DYNABASE_GIFT_RATES = ['A+', 'A', 'B+', 'B', 'C+', 'C', 'D'];
 
@@ -139,6 +140,19 @@ function fetchGiftListKeyperson(mysqli $conn, int $keypersonId): array
     return $keyperson;
 }
 
+/**
+ * Gifting a person puts them on the list owner's contact list: any PMS Admin may gift anyone in the
+ * shared directory, and every gift recipient is always one of the owner's contacts afterwards.
+ */
+function linkGiftRecipientToListOwner(mysqli $conn, int $giftListId, int $keypersonId, int $actorId): bool
+{
+    $list = dbFetchOne($conn, 'SELECT owner_pms_admin_id FROM gift_lists WHERE id = ? LIMIT 1', 'i', [$giftListId]);
+    if (!$list || (int) $list['owner_pms_admin_id'] <= 0) {
+        return false;
+    }
+    return ensureKeypersonPmsAssignment($conn, $keypersonId, (int) $list['owner_pms_admin_id'], $actorId);
+}
+
 function upsertGiftListItem(
     mysqli $conn,
     int $giftListId,
@@ -194,6 +208,10 @@ function upsertGiftListItem(
         'ii',
         [$actorId, $giftListId]
     )->close();
+
+    if ($decision === 'selected') {
+        linkGiftRecipientToListOwner($conn, $giftListId, (int) $keyperson['id'], $actorId);
+    }
 }
 
 function normalizeGiftListRows(mysqli $conn, int $_ownerPmsAdminId, mixed $rows): array
@@ -297,6 +315,7 @@ function replaceGiftListItems(mysqli $conn, int $giftListId, array $rows, int $a
                 $actorId,
             ]
         )->close();
+        linkGiftRecipientToListOwner($conn, $giftListId, (int) $row['keyperson_id'], $actorId);
     }
 }
 

@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../../includes/xlsxReport.php';
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/submissionRegister.php';
 require_once __DIR__ . '/../../includes/audit.php';
@@ -16,24 +17,21 @@ $rows = dbFetchAll(
     $params
 );
 
-$filename = 'dynabase-submission-register-' . date('Y-m-d') . '.csv';
+$filename = 'dynabase-submission-register-' . date('Y-m-d') . '.xlsx';
 writeAuditLog($conn, $authUser, 'submission_register.exported', 'submission_register_report', 'csv', [
     'filename' => $filename,
     'record_count' => count($rows),
 ]);
 
-header('Content-Type: text/csv; charset=utf-8');
-header('Content-Disposition: attachment; filename="' . $filename . '"');
-header('X-Content-Type-Options: nosniff');
-$output = fopen('php://output', 'wb');
-fputcsv($output, [
+$exportRows = [];
+$exportHeaders = ([
     'Reference', 'Project / Company', 'Tender Code', 'Client', 'Category', 'Date Received', 'Date Submitted',
     'Mode of Submission', 'Hard Copy Contact Name', 'Hard Copy Contact Email', 'Hard Copy Contact Phone',
     'Hard Copy Address', 'Email Recipient', 'Status', 'PMS Owner', 'Updates', 'Latest Update',
     'Created By', 'Created At', 'Updated By', 'Updated At'
 ]);
 foreach ($rows as $row) {
-    fputcsv($output, [
+    $exportRows[] = ([
         $row['submission_reference'],
         $row['project_company_name'],
         $row['project_tender_code'] ?: $row['linked_project_tender_code'],
@@ -57,5 +55,4 @@ foreach ($rows as $row) {
         $row['updated_at'],
     ]);
 }
-fclose($output);
-exit;
+dynabaseOutputTableXlsx($filename, 'Submission Register', $exportHeaders, $exportRows);

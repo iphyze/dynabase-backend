@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../../includes/xlsxReport.php';
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/giftLists.php';
 
@@ -74,16 +75,12 @@ $rows = dbFetchAll(
     $params
 );
 
-$filename = 'dynabase-gift-lists-' . date('Y-m-d') . '.csv';
-header('Content-Type: text/csv; charset=utf-8');
-header('Content-Disposition: attachment; filename="' . $filename . '"');
-header('Pragma: no-cache');
-header('Expires: 0');
+$filename = 'dynabase-gift-lists-' . date('Y-m-d') . '.xlsx';
 
-$output = fopen('php://output', 'w');
-fputcsv($output, ['Gift Year', 'PMS Owner', 'Owner Email', 'Client', 'Key Person', 'Designation', 'Email', 'Telephone', 'Gift Rate', 'Notes', 'Source', 'Verified', 'Updated At']);
+$exportRows = [];
+$exportHeaders = (['Gift Year', 'PMS Owner', 'Owner Email', 'Client', 'Key Person', 'Designation', 'Email', 'Telephone', 'Gift Rate', 'Notes', 'Source', 'Verified', 'Updated At']);
 foreach ($rows as $row) {
-    fputcsv($output, [
+    $exportRows[] = ([
         $row['gift_year'] ?? '',
         trim((string) ($row['owner_name'] ?? '')),
         $row['owner_email'] ?? '',
@@ -99,5 +96,4 @@ foreach ($rows as $row) {
         $row['updated_at'] ?? '',
     ]);
 }
-fclose($output);
-exit;
+dynabaseOutputTableXlsx($filename, 'Gift Lists', $exportHeaders, $exportRows);

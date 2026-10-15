@@ -57,7 +57,21 @@ $actorEmail = actorEmail($authUser);
 $actorId = (int) $authUser['id'];
 $message = 'Selected key persons updated successfully.';
 
-if (in_array($action, ['activate', 'deactivate'], true)) {
+if ($action === 'deactivate' && isPmsWorkspaceUser($authUser)) {
+    // PMS contact lists: remove the selected people from this PMS Admin's list only.
+    $pmsAdminId = (int) (resolveOwnerPmsAdminId($authUser) ?? 0);
+    if ($pmsAdminId <= 0) {
+        throw new RuntimeException('Your account is not linked to a PMS Admin contact list.', 403);
+    }
+    dbExecute(
+        $conn,
+        "DELETE FROM keyperson_pms_assignments WHERE pms_admin_id = ? AND keyperson_id IN ({$placeholders})",
+        'i' . str_repeat('i', count($ids)),
+        array_merge([$pmsAdminId], $ids)
+    )->close();
+    $action = 'unlink';
+    $message = 'Selected key persons removed from your contact list. Other PMS Admins who work with them keep them.';
+} elseif (in_array($action, ['activate', 'deactivate'], true)) {
     $status = $action === 'activate' ? 'active' : 'deactivated';
     dbExecute(
         $conn,

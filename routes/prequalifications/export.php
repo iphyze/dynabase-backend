@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../../includes/xlsxReport.php';
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/prequalifications.php';
 
@@ -60,19 +61,16 @@ $rows = dbFetchAll(
     $params
 );
 
-$filename = 'dynabase-prequalifications-' . date('Y-m-d') . '.csv';
-header('Content-Type: text/csv; charset=utf-8');
-header('Content-Disposition: attachment; filename="' . $filename . '"');
-header('X-Content-Type-Options: nosniff');
-$output = fopen('php://output', 'wb');
-fputcsv($output, [
+$filename = 'dynabase-prequalifications-' . date('Y-m-d') . '.xlsx';
+$exportRows = [];
+$exportHeaders = ([
     'Company', 'Linked Client', 'Company Address', 'Company Email', 'Company Phone', 'Company Website',
     'Representative', 'Representative Phone', 'Representative Designation', 'Business Information',
     'Prospective Project', 'Budget', 'Services Required', 'Remarks / Next Steps', 'PMS Owner',
     'Created By', 'Created At', 'Updated By', 'Updated At'
 ]);
 foreach ($rows as $row) {
-    fputcsv($output, [
+    $exportRows[] = ([
         $row['clients_name'], $row['linked_client_name'] ?: 'Unlinked legacy/company record',
         $row['clients_address'], $row['clients_email'], $row['clients_phone'], $row['clients_website'],
         $row['key_person'], $row['key_persons_tel'], $row['title'], $row['business_info'],
@@ -82,5 +80,4 @@ foreach ($rows as $row) {
         $row['updated_by_name'] ?: $row['updated_by'], $row['updated_at'],
     ]);
 }
-fclose($output);
-exit;
+dynabaseOutputTableXlsx($filename, 'Prequalifications', $exportHeaders, $exportRows);

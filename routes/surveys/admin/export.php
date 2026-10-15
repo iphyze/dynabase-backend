@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/../../../includes/xlsxReport.php';
 require_once __DIR__ . '/../../../includes/request.php';
 require_once __DIR__ . '/../../../includes/surveys.php';
 
@@ -32,13 +33,10 @@ if ($dateFrom !== '') { $where .= ' AND DATE(s.createdAt) >= ?'; $types .= 's'; 
 if ($dateTo !== '') { $where .= ' AND DATE(s.createdAt) <= ?'; $types .= 's'; $params[] = $dateTo; }
 
 $rows = dbFetchAll($conn, surveySelectSql() . $where . ' ORDER BY s.createdAt DESC LIMIT 10000', $types, $params);
-header('Content-Type: text/csv; charset=utf-8');
-header('Content-Disposition: attachment; filename="dynabase-client-surveys-' . date('Y-m-d') . '.csv"');
-header('X-Content-Type-Options: nosniff');
-$output = fopen('php://output', 'wb');
-fputcsv($output, ['Reference','Company','Project','Respondent','Position','Email','Phone','Location','Overall Score','Quality','Timeline','Expertise','Communication','Resolution','Cleanliness','Safety','Complaint Response','Electrical Services','Mechanical Services','Status','Submitted At']);
+$filename = 'dynabase-client-surveys-' . date('Y-m-d') . '.xlsx';
+$exportRows = [];
+$exportHeaders = (['Reference','Company','Project','Respondent','Position','Email','Phone','Location','Overall Score','Quality','Timeline','Expertise','Communication','Resolution','Cleanliness','Safety','Complaint Response','Electrical Services','Mechanical Services','Status','Submitted At']);
 foreach ($rows as $row) {
-    fputcsv($output, [$row['submission_reference'],$row['company'],$row['project_title'],$row['filled_by'],$row['position'],$row['email'],$row['phone_number'],$row['location'],$row['overall_score'],$row['quality'],$row['timeline'],$row['expertise'],$row['communication'],$row['resolution'],$row['cleaniness'],$row['safety'],$row['response'],$row['electrical_services'],$row['mechanical_services'],$row['response_status'],$row['createdAt']]);
+    $exportRows[] = ([$row['submission_reference'],$row['company'],$row['project_title'],$row['filled_by'],$row['position'],$row['email'],$row['phone_number'],$row['location'],$row['overall_score'],$row['quality'],$row['timeline'],$row['expertise'],$row['communication'],$row['resolution'],$row['cleaniness'],$row['safety'],$row['response'],$row['electrical_services'],$row['mechanical_services'],$row['response_status'],$row['createdAt']]);
 }
-fclose($output);
-exit;
+dynabaseOutputTableXlsx($filename, 'Client Surveys', $exportHeaders, $exportRows);

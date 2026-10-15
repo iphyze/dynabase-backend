@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/audit.php';
 require_once __DIR__ . '/../../includes/permissions.php';
+require_once __DIR__ . '/../../includes/pmsReassignment.php';
 
 use Respect\Validation\Validator as v;
 
@@ -114,7 +115,27 @@ $permissionInput = is_array($submittedPermissionKeys)
     : userEffectivePermissions($conn, $target);
 $resolvedPermissionKeys = resolveSubmittedPermissions($conn, $actor, $nextRole, $permissionInput);
 
+// Losing PMS capability while owning records requires a hand-over to another PMS Admin.
+$reassignToPmsAdminId = null;
+if (userIsPmsCapable((string) $target['role'], (int) $target['is_pms_admin'])
+    && !userIsPmsCapable($nextRole, $nextIsPmsAdmin)) {
+    $ownedCounts = pmsOwnedRecordCounts($conn, $userId);
+    if ($ownedCounts['total'] > 0) {
+        if (empty($data['reassign_to_pms_admin_id'])) {
+            respondPmsReassignmentRequired($conn, [[
+                'id' => $userId,
+                'name' => trim($target['first_name'] . ' ' . $target['last_name']),
+                'email' => $target['email'],
+                'counts' => $ownedCounts,
+            ]]);
+        }
+        $reassignToPmsAdminId = resolvePmsReassignmentTarget($conn, $data['reassign_to_pms_admin_id'], [$userId]);
+    }
+}
+
 $actorId = (int) $actor['id'];
+$conn->begin_transaction();
+try {
 $updateStmt = $conn->prepare(
     'UPDATE users
      SET first_name = ?, last_name = ?, role = ?, is_pms_admin = ?, status = ?, parent_pms_admin_id = ?, updated_by = ?
@@ -125,6 +146,24 @@ $updateStmt->execute();
 $updateStmt->close();
 
 replaceUserPermissions($conn, $userId, $resolvedPermissionKeys, $actorId, $nextRole);
+
+$reassigned = null;
+if ($reassignToPmsAdminId !== null) {
+    $reassigned = reassignPmsOwnership($conn, $userId, $reassignToPmsAdminId, $actorId);
+}
+    $conn->commit();
+} catch (Throwable $exception) {
+    $conn->rollback();
+    throw $exception;
+}
+
+if ($reassigned !== null) {
+    writeAuditLog($conn, $actor, 'users.pms_reassigned', 'user', $userId, [
+        'target_email' => $target['email'],
+        'to_pms_admin_id' => $reassignToPmsAdminId,
+        'moved' => $reassigned,
+    ]);
+}
 
 writeAuditLog($conn, $actor, 'users.update', 'user', $userId, [
     'target_email' => $target['email'],
@@ -138,5 +177,9 @@ writeAuditLog($conn, $actor, 'users.update', 'user', $userId, [
 
 jsonResponse([
     'status' => 'Success',
-    'message' => 'User updated successfully.'
+    'message' => $reassigned !== null
+        ? sprintf('User updated. %d client(s), %d contact(s) and %d gift list(s) were handed over to the selected PMS Admin.',
+            $reassigned['clients'], $reassigned['keypersons'], $reassigned['gift_lists'])
+        : 'User updated successfully.',
+    'data' => ['reassigned' => $reassigned],
 ]);
