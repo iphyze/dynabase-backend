@@ -57,6 +57,8 @@ $routes = [
 
     '/gift-lists/list' => 'routes/gift-lists/list.php',
     '/gift-lists/show' => 'routes/gift-lists/show.php',
+    '/gift-lists/resolve' => 'routes/gift-lists/resolve.php',
+    '/gift-lists/prepare' => 'routes/gift-lists/prepare.php',
     '/gift-lists/create' => 'routes/gift-lists/create.php',
     '/gift-lists/update' => 'routes/gift-lists/update.php',
     '/gift-lists/delete' => 'routes/gift-lists/delete.php',
@@ -259,7 +261,9 @@ function routePermissionForPath(string $path): string|array|null
 
         '/gift-lists/list' => 'gift_lists.view',
         '/gift-lists/show' => 'gift_lists.view',
-        '/gift-lists/create' => 'gift_lists.create',
+        '/gift-lists/resolve' => ['gift_lists.create', 'gift_lists.edit'],
+        '/gift-lists/prepare' => ['gift_lists.create', 'gift_lists.edit'],
+        '/gift-lists/create' => ['gift_lists.create', 'gift_lists.edit'],
         '/gift-lists/update' => 'gift_lists.edit',
         '/gift-lists/update-item' => 'gift_lists.edit',
         '/gift-lists/add-keypersons' => 'gift_lists.edit',
