@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/permissions.php';
 require_once __DIR__ . '/../../includes/audit.php';
+require_once __DIR__ . '/../../includes/pmsPortalAuth.php';
 
 use Firebase\JWT\JWT;
 use Respect\Validation\Validator as v;
@@ -26,7 +27,7 @@ if (!v::email()->validate($email) || $password === '') {
 assertLoginNotRateLimited($conn, $email);
 
 $stmt = $conn->prepare(
-    'SELECT id, first_name, last_name, email, password_hash, role, is_pms_admin, status, parent_pms_admin_id, invited_by, created_by, updated_by, must_change_password, password_changed_at, temporary_password_set_at, last_login_at, created_at
+    'SELECT id, first_name, last_name, email, password_hash, role, is_pms_admin, pms_portal_only, status, parent_pms_admin_id, invited_by, created_by, updated_by, must_change_password, password_changed_at, temporary_password_set_at, last_login_at, created_at
      FROM users
      WHERE email = ?
      LIMIT 1'
@@ -53,7 +54,7 @@ if ($user) {
     $passwordValid = $passwordValid || $legacyPassword || $legacySha1Password;
 }
 
-if (!$user || !$passwordValid) {
+if (!$user || (int) ($user['pms_portal_only'] ?? 0) === 1 || !$passwordValid) {
     recordLoginAttempt($conn, $email, false);
     throw new RuntimeException('Invalid email or password.', 401);
 }
@@ -92,6 +93,9 @@ $jwt = JWT::encode($payload, jwtSecret(), 'HS256');
 createAuthSession($conn, $userId, $jti, $expiresAt);
 recordLoginAttempt($conn, $email, true);
 issueAuthCookie($jwt, $expiresAt);
+// Never retain a portal cookie belonging to a previously signed-in account.
+// Eligible PMS users receive a new scoped portal session via /pms-portal/auth/from-main-app.
+pmsPortalClearCookie();
 $csrfToken = issueCsrfCookie(true);
 
 $updateStmt = $conn->prepare('UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?');

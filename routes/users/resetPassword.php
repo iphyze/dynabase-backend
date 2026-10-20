@@ -19,7 +19,7 @@ if ($userId <= 0) {
 }
 
 $stmt = $conn->prepare(
-    'SELECT id, first_name, last_name, email, role, status, parent_pms_admin_id, invited_by, created_by, updated_by, last_login_at, created_at
+    'SELECT id, first_name, last_name, email, role, pms_portal_only, status, parent_pms_admin_id, invited_by, created_by, updated_by, last_login_at, created_at
      FROM users
      WHERE id = ?
      LIMIT 1'
@@ -34,6 +34,10 @@ if (!$target) {
 }
 
 $target = normalizeUserRow($target);
+if ((int) ($target['pms_portal_only'] ?? 0) === 1) {
+    throw new RuntimeException('Portal-only users do not have a Dynabase password.', 403);
+}
+
 if (!canResetUserPassword($actor, $target)) {
     throw new RuntimeException('User not found.', 404);
 }

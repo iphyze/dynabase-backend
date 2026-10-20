@@ -56,6 +56,16 @@ $result = [
         'DELETE FROM client_survey_form_sessions WHERE expires_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
         $sessionDays
     ),
+    'pms_portal_codes_deleted' => $purge(
+        $conn,
+        'DELETE FROM pms_portal_login_codes WHERE expires_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+        $sessionDays
+    ),
+    'pms_portal_requests_deleted' => $purge(
+        $conn,
+        'DELETE FROM pms_portal_login_requests WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+        $attemptDays
+    ),
     'retention_days' => ['sessions' => $sessionDays, 'login_attempts' => $attemptDays],
     'ran_at' => date('c'),
 ];

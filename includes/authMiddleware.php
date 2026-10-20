@@ -18,7 +18,7 @@ function unauthenticated(string $message = 'Authentication required.'): never
 
 function currentUserSelectSql(): string
 {
-    return 'SELECT id, first_name, last_name, email, role, is_pms_admin, status, parent_pms_admin_id,
+    return 'SELECT id, first_name, last_name, email, role, is_pms_admin, pms_portal_only, status, parent_pms_admin_id,
                    invited_by, created_by, updated_by, must_change_password, password_changed_at,
                    temporary_password_set_at, last_login_at, created_at
             FROM users
@@ -103,6 +103,10 @@ function authenticateUser(): array
 
         if (!$user) {
             unauthenticated('Account is no longer available.');
+        }
+
+        if ((int) ($user['pms_portal_only'] ?? 0) === 1) {
+            unauthenticated('This user can only access the PMS Gift Portal.');
         }
 
         if (!in_array((string) $user['status'], ['active'], true)) {
