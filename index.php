@@ -94,6 +94,11 @@ $routes = [
     '/gift-lists/add-keypersons' => 'routes/gift-lists/addKeypersons.php',
     '/gift-lists/export' => 'routes/gift-lists/export.php',
 
+    '/gift-list-emails/recipients' => 'routes/gift-list-emails/recipients.php',
+    '/gift-list-emails/send' => 'routes/gift-list-emails/send.php',
+    '/gift-list-emails/preview' => 'routes/gift-list-emails/preview.php',
+    '/gift-list-emails/history' => 'routes/gift-list-emails/history.php',
+
     '/documents/list' => 'routes/documents/list.php',
     '/documents/show' => 'routes/documents/show.php',
     '/documents/options' => 'routes/documents/options.php',
@@ -264,6 +269,11 @@ function routePermissionForPath(string $path): string|array|null
         '/users/resend-invitation' => 'users.invite',
         '/users/export' => 'users.export',
         '/users/permissions' => ['users.view', 'users.edit'],
+
+        '/gift-list-emails/recipients' => 'gift_list_emails.send',
+        '/gift-list-emails/send' => 'gift_list_emails.send',
+        '/gift-list-emails/preview' => 'gift_list_emails.send',
+        '/gift-list-emails/history' => 'gift_list_emails.send',
 
         '/clients/list' => 'clients.view',
         '/clients/show' => 'clients.view',

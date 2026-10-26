@@ -31,6 +31,7 @@ function dynabasePermissionCatalog(): array
             ['key' => 'gift_lists.edit', 'label' => 'Edit gift lists', 'description' => 'Update annual registers and recipient decisions.'],
             ['key' => 'gift_lists.delete', 'label' => 'Delete gift lists', 'description' => 'Remove annual registers.'],
             ['key' => 'gift_lists.export', 'label' => 'Export gift lists', 'description' => 'Download gift-list workbooks.'],
+            ['key' => 'gift_list_emails.send', 'label' => 'Send Gift List emails', 'description' => 'Send Gift List invitations, reminders and announcements to selected users.'],
         ],
         'Tenders' => [
             ['key' => 'tenders.view', 'label' => 'View tenders', 'description' => 'Open tender registers and profiles.'],
@@ -154,7 +155,10 @@ function dynabaseAdministrationPermissionKeys(): array
 
 function dynabasePmsRelationshipPermissionKeys(): array
 {
-    return dynabasePermissionKeysForSections(['Clients', 'Key Persons', 'Gift Lists', 'Agreement Register']);
+    return array_values(array_diff(
+        dynabasePermissionKeysForSections(['Clients', 'Key Persons', 'Gift Lists', 'Agreement Register']),
+        ['gift_list_emails.send']
+    ));
 }
 
 function dynabasePermissionDependencies(): array
