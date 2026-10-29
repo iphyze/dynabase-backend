@@ -4,8 +4,12 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../includes/connection.php';
 require_once __DIR__ . '/../../includes/authMiddleware.php';
 require_once __DIR__ . '/../../includes/authorization.php';
+require_once __DIR__ . '/../../includes/permissions.php';
+require_once __DIR__ . '/../../includes/pmsPortalAuth.php';
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/audit.php';
+
+use Firebase\JWT\JWT;
 
 requireMethod('POST');
 
@@ -55,29 +59,68 @@ $legacySha1Password = preg_match('/^[a-f0-9]{40}$/i', $storedHash) === 1
     && hash_equals(strtolower($storedHash), sha1($currentPassword));
 
 if (!$currentPasswordValid && !$legacyMd5Password && !$legacySha1Password) {
-    throw new RuntimeException('Current password is incorrect.', 401);
+    throw new RuntimeException('Current password is incorrect. Please check it and try again.', 422);
 }
 
 $newHash = password_hash($newPassword, PASSWORD_DEFAULT);
+$issuedAt = time();
+$expiresAt = $issuedAt + jwtTtlSeconds();
+$newJti = bin2hex(random_bytes(32));
 
-$updateStmt = $conn->prepare(
-    'UPDATE users
-     SET password_hash = ?, must_change_password = 0, password_changed_at = CURRENT_TIMESTAMP,
-         temporary_password_set_at = NULL, updated_by = ?
-     WHERE id = ?'
-);
-$updateStmt->bind_param('sii', $newHash, $actorId, $actorId);
-$updateStmt->execute();
-$updateStmt->close();
+// Rotate credentials and replace all existing sessions atomically. The
+// password-change session remains signed in, but every old token is revoked.
+$conn->begin_transaction();
+try {
+    $updateStmt = $conn->prepare(
+        'UPDATE users
+         SET password_hash = ?, must_change_password = 0, password_changed_at = CURRENT_TIMESTAMP,
+             temporary_password_set_at = NULL, updated_by = ?
+         WHERE id = ?'
+    );
+    $updateStmt->bind_param('sii', $newHash, $actorId, $actorId);
+    $updateStmt->execute();
+    $updateStmt->close();
 
-revokeAllUserSessions($conn, $actorId);
-clearAuthCookie();
-clearCsrfCookie();
+    revokeAllUserSessions($conn, $actorId);
+    createAuthSession($conn, $actorId, $newJti, $expiresAt);
+    $conn->commit();
+} catch (Throwable $exception) {
+    $conn->rollback();
+    throw $exception;
+}
 
-writeAuditLog($conn, $actor, 'auth.change_password', 'user', $actorId);
+// The previous session (including any PMS portal token) is invalidated.
+// Create a fresh HttpOnly main-app session and rotate CSRF as on login.
+$newJwt = JWT::encode([
+    'iss' => jwtIssuer(),
+    'aud' => jwtAudience(),
+    'sub' => (string) $actorId,
+    'jti' => $newJti,
+    'iat' => $issuedAt,
+    'nbf' => $issuedAt,
+    'exp' => $expiresAt,
+], jwtSecret(), 'HS256');
+issueAuthCookie($newJwt, $expiresAt);
+pmsPortalClearCookie();
+$csrfToken = issueCsrfCookie(true);
 
+$refreshedStmt = $conn->prepare(currentUserSelectSql());
+$refreshedStmt->bind_param('i', $actorId);
+$refreshedStmt->execute();
+$refreshedUser = $refreshedStmt->get_result()->fetch_assoc();
+$refreshedStmt->close();
+if (!$refreshedUser) {
+    throw new RuntimeException('Password updated, but your account could not be loaded.', 500);
+}
+$refreshedUser = normalizeUserRow($refreshedUser);
+writeAuditLog($conn, $refreshedUser, 'auth.change_password', 'user', $actorId);
+
+header('Cache-Control: no-store');
 jsonResponse([
     'status' => 'Success',
-    'message' => 'Password updated successfully. Please sign in again with your new password.',
-    'requiresLogin' => true,
+    'message' => 'Password updated successfully.',
+    'requiresLogin' => false,
+    'requiresPasswordChange' => false,
+    'csrfToken' => $csrfToken,
+    'data' => userPublicPayload($refreshedUser) + ['permissions' => userEffectivePermissions($conn, $refreshedUser)],
 ]);

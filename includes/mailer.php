@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/emailTemplates.php';
+require_once __DIR__ . '/graphMailer.php';
+require_once __DIR__ . '/mailProviderSettings.php';
 
 use PHPMailer\PHPMailer\PHPMailer;
 
@@ -31,7 +33,7 @@ function dynabaseRequiredMailSetting(array $keys, string $label): string
 
 function dynabaseMailTransport(): string
 {
-    return strtolower(trim(envString('MAIL_DRIVER', 'smtp'))) === 'log' ? 'log' : 'smtp';
+    return dynabaseMailProviderSettings()['primary'];
 }
 
 /**
@@ -342,66 +344,133 @@ function dynabaseAddRecipients(
     }
 }
 
-function sendDynabaseMail(array $options): bool|string
+/**
+ * SMTP is safe to retry on a different provider only if validation, configuration,
+ * connection or authentication failed BEFORE message transmission began.
+ * After send() starts, a server may have accepted DATA even if the response is
+ * lost; treat any such failure as uncertain to avoid duplicate recipients.
+ */
+function dynabaseSmtpSendDetailed(array $options): array
 {
-    if (dynabaseMailTransport() === 'log') {
-        return dynabaseWriteMailLog($options);
-    }
-
-    $to = dynabaseNormalizeRecipients($options['to'] ?? []);
-    $cc = dynabaseNormalizeRecipients($options['cc'] ?? []);
-    $bcc = dynabaseNormalizeRecipients($options['bcc'] ?? []);
-
-    if ($to === []) {
-        dynabaseLogMailEvent('Mail skipped: no deliverable primary recipient.', [
-            'subject' => (string) ($options['subject'] ?? 'Dynabase notification'),
-        ]);
-        return 'skipped_no_deliverable_email';
-    }
-
     $mailer = configuredMailer();
     if (is_string($mailer)) {
-        return $mailer;
+        return ['status' => 'failed', 'retry_safe' => true, 'message' => $mailer];
     }
 
     try {
         $seen = [];
-        dynabaseAddRecipients($mailer, $to, 'to', $seen);
-        dynabaseAddRecipients($mailer, $cc, 'cc', $seen);
-        dynabaseAddRecipients($mailer, $bcc, 'bcc', $seen);
+        dynabaseAddRecipients($mailer, $options['to'], 'to', $seen);
+        dynabaseAddRecipients($mailer, $options['cc'], 'cc', $seen);
+        dynabaseAddRecipients($mailer, $options['bcc'], 'bcc', $seen);
 
-        $subject = (string) ($options['subject'] ?? 'Dynabase notification');
         $html = (string) ($options['html'] ?? '');
-        $text = trim((string) ($options['text'] ?? '')) !== ''
+        $mailer->isHTML(true);
+        $mailer->Subject = (string) ($options['subject'] ?? 'Dynabase notification');
+        $mailer->Body = $html;
+        $mailer->AltBody = trim((string) ($options['text'] ?? '')) !== ''
             ? (string) $options['text']
             : dynabaseEmailTextFromHtml($html);
 
-        $mailer->isHTML(true);
-        $mailer->Subject = $subject;
-        $mailer->Body = $html;
-        $mailer->AltBody = $text;
-
-        dynabaseLogMailEvent('Attempting email delivery.', [
-            'to' => array_column($to, 'email'),
-            'cc_count' => count($cc),
-            'bcc_count' => count($bcc),
-            'subject' => $subject,
-            'smtp_host' => $mailer->Host,
-            'smtp_port' => $mailer->Port,
-            'encryption' => (string) $mailer->SMTPSecure,
+        dynabaseLogMailEvent('Connecting to SMTP provider.', [
+            'provider' => 'smtp',
+            'to_count' => count($options['to']),
         ]);
-
-        $mailer->send();
-
-        dynabaseLogMailEvent('Email submitted successfully.', [
-            'to' => array_column($to, 'email'),
-            'subject' => $subject,
-        ]);
-
-        return true;
+        if (!$mailer->smtpConnect()) {
+            $message = trim((string) $mailer->ErrorInfo);
+            dynabaseLogMailEvent('SMTP connection failed before mail submission.');
+            return ['status' => 'failed', 'retry_safe' => true,
+                'message' => $message !== '' ? $message : 'SMTP connection failed.'];
+        }
     } catch (Throwable $exception) {
-        return dynabaseMailError($mailer, $exception);
+        return [
+            'status' => 'failed',
+            'retry_safe' => true,
+            'message' => dynabaseMailError($mailer, $exception),
+        ];
     }
+
+    try {
+        $mailer->send();
+        dynabaseLogMailEvent('SMTP accepted a message.', [
+            'provider' => 'smtp',
+            'to_count' => count($options['to']),
+        ]);
+        return ['status' => 'accepted', 'retry_safe' => false];
+    } catch (Throwable $exception) {
+        $message = dynabaseMailError($mailer, $exception);
+        return ['status' => 'uncertain', 'retry_safe' => false, 'message' => $message];
+    } finally {
+        $mailer->smtpClose();
+    }
+}
+
+/**
+ * A single sending entry point for OTP, invitations, reminders and alerts.
+ * Return signature remains bool|string for all existing callers.
+ */
+function sendDynabaseMail(array $options): bool|string
+{
+    $preference = dynabaseMailProviderSettings();
+    if ($preference['primary'] === 'log') {
+        return dynabaseWriteMailLog($options);
+    }
+    if (!envBool('MAIL_ENABLED', false)) {
+        return 'Mail is disabled. Set MAIL_ENABLED=true in the backend .env file.';
+    }
+
+    $options['to'] = dynabaseNormalizeRecipients($options['to'] ?? []);
+    $options['cc'] = dynabaseNormalizeRecipients($options['cc'] ?? []);
+    $options['bcc'] = dynabaseNormalizeRecipients($options['bcc'] ?? []);
+
+    if ($options['to'] === []) {
+        dynabaseLogMailEvent('Mail skipped: no deliverable primary recipient.');
+        return 'skipped_no_deliverable_email';
+    }
+
+    $primary = $preference['primary'];
+    $providers = [$primary];
+    if ($preference['failover_enabled']) {
+        $providers[] = $preference['backup'];
+    }
+
+    foreach ($providers as $index => $provider) {
+        $result = $provider === 'graph'
+            ? dynabaseGraphSendDetailed($options)
+            : dynabaseSmtpSendDetailed($options);
+
+        dynabaseLogMailEvent('Email provider attempt completed.', [
+            'provider' => $provider,
+            'outcome' => $result['status'],
+            'backup_attempt' => $index > 0,
+        ]);
+
+        if ($result['status'] === 'accepted') {
+            return true;
+        }
+
+        // Only a definite, pre-submission failure can trigger a second send.
+        // In particular, never fail over on network timeouts, SMTP DATA failures,
+        // Graph 5xx responses or other uncertain submission states.
+        if ($index === 0 && count($providers) > 1 && ($result['retry_safe'] ?? false)) {
+            dynabaseLogMailEvent('Attempting alternate mail provider after a safe failure.', [
+                'primary' => $primary,
+                'backup' => $preference['backup'],
+            ]);
+            continue;
+        }
+
+        if ($result['status'] === 'uncertain') {
+            return 'Email status is uncertain. Check the sending provider before retrying.';
+        }
+
+        return $index > 0
+            ? 'Both email providers failed to submit this message. Check mail service logs.'
+            : ($provider === 'graph'
+                ? 'Microsoft Graph could not send this email. Check the mail service logs.'
+                : (string) ($result['message'] ?? 'SMTP could not send this email.'));
+    }
+
+    return 'No email provider is available.';
 }
 
 function sendDynabaseTemplateEmail(

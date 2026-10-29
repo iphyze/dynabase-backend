@@ -42,6 +42,8 @@ function appSettingDefinitions(): array
         'notification_survey_enabled' => ['type' => 'boolean', 'default' => true],
         'notification_access_enabled' => ['type' => 'boolean', 'default' => true],
         'document_types' => ['type' => 'json', 'default' => ['Profile', 'Presentation', 'Tender']],
+        'mail_primary_provider' => ['type' => 'string', 'default' => ''],
+        'mail_failover_enabled' => ['type' => 'boolean', 'default' => false],
     ];
 }
 

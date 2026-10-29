@@ -29,7 +29,7 @@ if ($recent) {
     jsonResponse(['status' => 'Success', 'message' => $genericMessage]);
 }
 
-if (dynabaseMailTransport() !== 'smtp' || !envBool('MAIL_ENABLED', false)) {
+if (!in_array(dynabaseMailTransport(), ['smtp', 'graph'], true) || !envBool('MAIL_ENABLED', false)) {
     throw new RuntimeException('Email verification is temporarily unavailable.', 503);
 }
 

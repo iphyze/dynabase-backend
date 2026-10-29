@@ -29,6 +29,15 @@ $jwt = JWT::encode([
 ], jwtSecret(), 'HS256');
 createAuthSession($conn, $userId, $jti, $expires);
 setcookie(pmsPortalCookieName(), $jwt, pmsPortalCookieOptions($expires));
+// authenticateUser() omits has_password, but the portal header needs it
+// immediately to show the Main App switch (without requiring a refresh).
+$passwordRecord = dbFetchOne(
+    $conn,
+    'SELECT (password_hash IS NOT NULL AND LENGTH(password_hash) > 0) AS has_password FROM users WHERE id = ? LIMIT 1',
+    'i',
+    [$userId]
+);
+$user['has_password'] = (int) ($passwordRecord['has_password'] ?? 0);
 $user['owner_pms_admin_id'] = $ownerId;
 writeAuditLog($conn, $user, 'auth.main_app_to_pms_portal', 'user', $userId);
 header('Cache-Control: no-store');

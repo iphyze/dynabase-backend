@@ -156,6 +156,9 @@ $routes = [
 
     '/settings/overview' => 'routes/settings/overview.php',
     '/settings/update' => 'routes/settings/update.php',
+    '/settings/mail-provider' => 'routes/settings/mailProvider.php',
+    '/settings/mail-provider/update' => 'routes/settings/updateMailProvider.php',
+    '/settings/mail-provider/test' => 'routes/settings/testMailProvider.php',
 
     '/reports/overview' => 'routes/reports/overview.php',
     '/reports/agreement-register' => 'routes/reports/agreementRegister.php',

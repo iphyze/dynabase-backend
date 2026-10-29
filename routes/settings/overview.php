@@ -7,6 +7,7 @@ require_once __DIR__ . '/../../includes/authorization.php';
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/settings.php';
 require_once __DIR__ . '/../../includes/notifications.php';
+require_once __DIR__ . '/../../includes/mailProviderSettings.php';
 
 requireMethod('GET');
 
@@ -16,8 +17,11 @@ $settings = loadAppSettings($conn);
 $lastUpdate = appSettingsLastUpdate($conn);
 $uploadsPath = dirname(__DIR__, 2) . '/uploads';
 $mailEnabled = envBool('MAIL_ENABLED', false);
-$smtpConfigured = trim(envString('SMTP_HOST')) !== ''
-    && trim(envString('SMTP_FROM_EMAIL')) !== '';
+$mailProviders = dynabaseMailProviderSettings($conn);
+$mailReadiness = dynabaseMailProviderReadiness();
+$smtpConfigured = $mailReadiness['smtp'];
+$mailPrimary = $mailProviders['primary'];
+$mailReady = $mailEnabled && ($mailReadiness[$mailPrimary] ?? false);
 $turnstileConfigured = trim(envString('TURNSTILE_SECRET_KEY')) !== '';
 $notificationsReady = notificationsTableExists($conn);
 $auditReady = dbFetchOne($conn, "SHOW TABLES LIKE 'audit_logs'") !== null;
@@ -40,10 +44,10 @@ $healthChecks = [
     [
         'key' => 'mail',
         'label' => 'Email delivery',
-        'status' => ($mailEnabled && $smtpConfigured) ? 'ready' : 'attention',
-        'detail' => ($mailEnabled && $smtpConfigured)
-            ? 'SMTP delivery is enabled and configured.'
-            : 'SMTP delivery requires environment configuration.',
+        'status' => $mailReady ? 'ready' : 'attention',
+        'detail' => $mailReady
+            ? strtoupper($mailPrimary) . ' email delivery is configured.'
+            : 'The selected email provider requires configuration or email is disabled.',
     ],
     [
         'key' => 'uploads',
@@ -78,6 +82,9 @@ jsonResponse([
             'php_version' => PHP_VERSION,
             'mail_enabled' => $mailEnabled,
             'smtp_configured' => $smtpConfigured,
+            'graph_configured' => $mailReadiness['graph'],
+            'mail_provider' => $mailPrimary,
+            'mail_failover_enabled' => $mailProviders['failover_enabled'],
             'turnstile_configured' => $turnstileConfigured,
             'notifications_ready' => $notificationsReady,
             'audit_ready' => $auditReady,
