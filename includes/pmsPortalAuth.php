@@ -145,6 +145,7 @@ function pmsPortalCurrentUser(mysqli $conn): array
         validateCsrfToken();
         $user['owner_pms_admin_id'] = $ownerId;
         $user['session_jti'] = $jti;
+        $user['auth_method'] = (string) ($decoded['amr'] ?? 'password');
         return $user;
     } catch (Throwable $exception) {
         pmsPortalClearCookie();
@@ -170,11 +171,13 @@ function pmsPortalPublicUser(array $user, mysqli $conn): array
         'name' => trim((string) $user['first_name'] . ' ' . (string) $user['last_name']),
         'email' => (string) $user['email'],
         'role' => (string) $user['role'],
+        'auth_method' => (string) ($user['auth_method'] ?? 'password') === 'email_code' ? 'email_code' : 'password',
+        'must_change_password' => (int) ($user['must_change_password'] ?? 0) === 1,
         'owner_pms_admin_id' => $ownerId,
         'owner_name' => $ownerName,
         'can_open_main_app' => (int) ($user['pms_portal_only'] ?? 0) !== 1
-            && (int) ($user['must_change_password'] ?? 0) !== 1
-            && (int) ($user['has_password'] ?? 0) === 1
+            && ((int) ($user['must_change_password'] ?? 0) !== 1 || ($user['auth_method'] ?? '') === 'email_code')
+            && ((int) ($user['has_password'] ?? 0) === 1 || ($user['auth_method'] ?? '') === 'email_code')
             && (in_array((string) ($user['role'] ?? ''), [DYNABASE_ROLE_PMS_ADMIN, DYNABASE_ROLE_PMS_USER], true)
                 || ((string) ($user['role'] ?? '') === DYNABASE_ROLE_ADMIN && (int) ($user['is_pms_admin'] ?? 0) === 1)),
     ];

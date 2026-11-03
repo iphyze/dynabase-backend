@@ -117,8 +117,12 @@ function authenticateUser(): array
 
         $user = normalizeUserRow($user);
         $user['jti'] = $jti;
+        // This is a signed JWT claim, never a client-supplied request flag.
+        // Existing password sessions have no claim and stay subject to the
+        // temporary-password enforcement policy.
+        $user['auth_method'] = (string) ($decoded['amr'] ?? 'password');
 
-        if ($user['must_change_password'] && !passwordChangeAllowedRoute()) {
+        if ($user['must_change_password'] && $user['auth_method'] !== 'email_code' && !passwordChangeAllowedRoute()) {
             jsonResponse([
                 'status' => 'PasswordChangeRequired',
                 'message' => 'Please create a new password before continuing.',

@@ -25,7 +25,7 @@ $expires = $now + pmsPortalSessionSeconds();
 $jti = bin2hex(random_bytes(32));
 $jwt = JWT::encode([
     'iss' => jwtIssuer(), 'aud' => 'dynabase-pms-portal', 'scope' => 'gift-list-only',
-    'sub' => (string) $userId, 'jti' => $jti, 'iat' => $now, 'nbf' => $now, 'exp' => $expires,
+    'sub' => (string) $userId, 'jti' => $jti, 'amr' => ($user['auth_method'] ?? 'password'), 'iat' => $now, 'nbf' => $now, 'exp' => $expires,
 ], jwtSecret(), 'HS256');
 createAuthSession($conn, $userId, $jti, $expires);
 setcookie(pmsPortalCookieName(), $jwt, pmsPortalCookieOptions($expires));

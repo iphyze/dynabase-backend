@@ -59,16 +59,16 @@ try {
             $jti = bin2hex(random_bytes(32));
             $mainJwt = JWT::encode([
                 'iss' => jwtIssuer(), 'aud' => jwtAudience(), 'sub' => (string) $userId,
-                'jti' => $jti, 'iat' => $now, 'nbf' => $now, 'exp' => $mainExpires,
+                'jti' => $jti, 'amr' => 'email_code', 'iat' => $now, 'nbf' => $now, 'exp' => $mainExpires,
             ], jwtSecret(), 'HS256');
             createAuthSession($conn, $userId, $jti, $mainExpires);
         }
-        if ($autoPortal && !((int) ($user['must_change_password'] ?? 0) === 1 && !$portalOnly)) {
+        if ($autoPortal) {
             $portalExpires = $now + pmsPortalSessionSeconds();
             $jti = bin2hex(random_bytes(32));
             $portalJwt = JWT::encode([
                 'iss' => jwtIssuer(), 'aud' => 'dynabase-pms-portal', 'scope' => 'gift-list-only',
-                'sub' => (string) $userId, 'jti' => $jti, 'iat' => $now,
+                'sub' => (string) $userId, 'jti' => $jti, 'amr' => 'email_code', 'iat' => $now,
                 'nbf' => $now, 'exp' => $portalExpires,
             ], jwtSecret(), 'HS256');
             createAuthSession($conn, $userId, $jti, $portalExpires);
@@ -108,10 +108,13 @@ if ($portalOnly) {
 }
 $fullUser = dbFetchOne($conn, currentUserSelectSql(), 'i', [$userId]);
 $fullUser = normalizeUserRow($fullUser);
+// An OTP-authenticated session can work normally even while the account
+// still requires a password change on its next password-based sign-in.
+$fullUser['auth_method'] = 'email_code';
 writeAuditLog($conn, $fullUser, 'auth.email_code_login', 'user', $userId);
 jsonResponse([
     'status' => 'Success', 'message' => 'Signed in successfully.',
     'auth_scope' => 'main', 'csrfToken' => $csrfToken,
-    'requiresPasswordChange' => (bool) $fullUser['must_change_password'],
+    'requiresPasswordChange' => false,
     'data' => userPublicPayload($fullUser) + ['permissions' => userEffectivePermissions($conn, $fullUser)],
 ]);

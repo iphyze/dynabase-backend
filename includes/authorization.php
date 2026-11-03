@@ -239,7 +239,12 @@ function userPublicPayload(array $user): array
         'role' => $user['role'],
         'is_pms_admin' => (int) ($user['is_pms_admin'] ?? 0) === 1,
         'status' => $user['status'],
+        'auth_method' => (string) ($user['auth_method'] ?? 'password') === 'email_code' ? 'email_code' : 'password',
         'must_change_password' => (int) ($user['must_change_password'] ?? 0) === 1 || ($user['must_change_password'] ?? false) === true,
+        // Distinguish an unchanged temporary password from an enforced reset.
+        // Only sessions created by email-code verification may bypass it.
+        'password_change_required' => ((int) ($user['must_change_password'] ?? 0) === 1 || ($user['must_change_password'] ?? false) === true)
+            && (string) ($user['auth_method'] ?? 'password') !== 'email_code',
         'password_changed_at' => $user['password_changed_at'] ?? null,
         'parent_pms_admin_id' => isset($user['parent_pms_admin_id']) && $user['parent_pms_admin_id'] !== null
             ? (int) $user['parent_pms_admin_id']
