@@ -59,10 +59,8 @@ function giftEmailRecipientsFilter(array $options): array
         array_push($params, $like, $like, $like, $like);
     }
     if (!empty($options['only_unstarted'])) {
-        // Include blank saved lists, but exclude teams with selected recipients.
-        $where .= ' AND ' . giftEmailOwnerSql() . ' IS NOT NULL'
-            . " AND (gl.id IS NULL OR NOT EXISTS (SELECT 1 FROM gift_list_items gi"
-            . " WHERE gi.gift_list_id = gl.id AND gi.gift_decision = 'selected'))";
+        // A list prepared by an Admin/User is still unstarted until a PMS team member saves it.
+        $where .= ' AND ' . giftEmailOwnerSql() . ' IS NOT NULL AND pms_activity.id IS NULL';
     }
     return [$where, $types, $params];
 }
@@ -74,8 +72,10 @@ function giftEmailRecipientsSql(int $year, array $options): array
     $from = "FROM users u
         LEFT JOIN users parent ON parent.id = u.parent_pms_admin_id
         LEFT JOIN gift_lists gl ON gl.owner_pms_admin_id = {$owner} AND gl.gift_year = ?
+        LEFT JOIN gift_list_pms_activity pms_activity
+          ON pms_activity.owner_pms_admin_id = {$owner} AND pms_activity.gift_year = ?
         WHERE {$where}";
-    return [$from, 'i' . $types, array_merge([$year], $params)];
+    return [$from, 'ii' . $types, array_merge([$year, $year], $params)];
 }
 
 function giftEmailUserRows(mysqli $conn, int $year, array $ids): array
@@ -86,14 +86,27 @@ function giftEmailUserRows(mysqli $conn, int $year, array $ids): array
     $sql = "SELECT u.id, u.first_name, u.last_name, u.email, u.role, u.status, u.pms_portal_only,
             u.parent_pms_admin_id, u.is_pms_admin, {$owner} AS pms_owner_id,
             CONCAT_WS(' ', parent.first_name, parent.last_name) AS parent_name,
-            gl.id AS gift_list_id,
+            gl.id AS gift_list_id, pms_activity.first_started_at AS pms_started_at,
             (SELECT COUNT(*) FROM gift_list_items gi
              WHERE gi.gift_list_id = gl.id AND gi.gift_decision = 'selected') AS selected_recipients
         FROM users u
         LEFT JOIN users parent ON parent.id = u.parent_pms_admin_id
         LEFT JOIN gift_lists gl ON gl.owner_pms_admin_id = {$owner} AND gl.gift_year = ?
+        LEFT JOIN gift_list_pms_activity pms_activity
+          ON pms_activity.owner_pms_admin_id = {$owner} AND pms_activity.gift_year = ?
         WHERE u.id IN ({$placeholders}) AND u.status = 'active'";
-    return dbFetchAll($conn, $sql, 'i' . str_repeat('i', count($ids)), array_merge([$year], $ids));
+    return dbFetchAll($conn, $sql, 'ii' . str_repeat('i', count($ids)), array_merge([$year, $year], $ids));
+}
+
+/** Only a verified first save by the owner PMS team marks the year as started. */
+function giftEmailHasPmsStarted(array $row): bool
+{
+    return !empty($row['pms_started_at']);
+}
+
+function giftEmailReminderEligible(array $row): bool
+{
+    return (int) ($row['pms_owner_id'] ?? 0) > 0 && !giftEmailHasPmsStarted($row);
 }
 
 function giftEmailRecipientPayload(array $row): array
@@ -111,8 +124,9 @@ function giftEmailRecipientPayload(array $row): array
         'pms_owner_name' => (string) ($row['parent_name'] ?: ($owner === (int) $row['id'] ? $name : '')),
         'gift_list_id' => !empty($row['gift_list_id']) ? (int) $row['gift_list_id'] : null,
         'selected_recipients' => $count,
-        'gift_list_status' => !$owner ? 'not_applicable' : ($count > 0 ? 'started' : 'not_started'),
-        'reminder_eligible' => $owner > 0 && $count === 0,
+        'gift_list_status' => !$owner ? 'not_applicable' : (giftEmailHasPmsStarted($row) ? 'started' : 'not_started'),
+        'reminder_eligible' => giftEmailReminderEligible($row),
+        'has_prepared_entries' => $owner > 0 && $count > 0 && !giftEmailHasPmsStarted($row),
     ];
 }
 
@@ -165,9 +179,11 @@ function giftEmailContent(string $kind, array $recipient, int $year, string $cus
         $title = 'Your ' . $yearText . ' Gift List Is Ready';
         $eyebrow = 'GIFT LIST STARTER';
     } elseif ($kind === 'reminder') {
-        $intro = $salutation . '<p>Our records indicate that your PMS team has not yet saved a gift list '
-            . 'with selected recipients for <strong>' . $yearText . '</strong>. Please complete it when convenient.</p>';
-        $body = $guide . '<p style="margin-top:19px">If you have already updated the list, please save your changes.</p>';
+        $intro = $salutation . '<p>Our records do not yet show a save made by you or another member of your PMS team '
+            . 'for the <strong>' . $yearText . ' annual gift list</strong>. The list may already contain entries '
+            . 'prepared on your behalf.</p>';
+        $body = $guide . '<p style="margin-top:19px">Please open your list, review the recipients and rates, '
+            . 'and save your changes to confirm your team has started.</p>';
         $title = 'A Friendly Gift List Reminder';
         $eyebrow = 'ACTION REMINDER';
     } else {

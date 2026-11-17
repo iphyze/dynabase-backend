@@ -22,6 +22,11 @@ if (($record['response_status'] ?? '') === 'submitted') {
     writeAuditLog($conn, $authUser, 'client_surveys.reviewed', 'client_survey', $id);
 }
 
+// Supply question titles from the same versioned definition used by public forms.
+if (($record['survey_version'] ?? 1) === 2) {
+    $record['survey_definition'] = stakeholderSurveyV2Definition();
+}
+
 jsonResponse([
     'status' => 'Success',
     'message' => 'Client survey response retrieved successfully.',

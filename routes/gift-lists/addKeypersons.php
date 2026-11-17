@@ -102,6 +102,10 @@ try {
         $totalAdded++;
     }
 
+    if ($totalAdded > 0) {
+        recordGiftListPmsStart($conn, $authUser, $ownerPmsAdminId, $giftYear, $giftListId);
+    }
+
     writeAuditLog($conn, $authUser, 'gift_list.keypersons_added', 'gift_list', $giftListId, [
         'gift_year' => $giftYear,
         'owner_pms_admin_id' => $ownerPmsAdminId,

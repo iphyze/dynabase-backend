@@ -26,6 +26,7 @@ try {
         'UPDATE gift_lists SET updated_by_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
         'ii', [$actorId, $listId]
     )->close();
+    recordGiftListPmsStart($conn, $user, $ownerId, $year, $listId, 'pms_portal');
     writeAuditLog($conn, $user, 'gift_list.portal_saved', 'gift_list', $listId, [
         'gift_year' => $year,
         'owner_pms_admin_id' => $ownerId,

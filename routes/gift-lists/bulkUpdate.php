@@ -33,6 +33,7 @@ try {
         upsertGiftListItem($conn, $giftListId, $keyperson, $decision, $rate, '', $actorId);
         $processed++;
     }
+    recordGiftListPmsStart($conn, $authUser, $ownerPmsAdminId, $giftYear, $giftListId);
     $conn->commit();
 } catch (Throwable $exception) {
     $conn->rollback();

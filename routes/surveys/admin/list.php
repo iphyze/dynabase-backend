@@ -46,7 +46,7 @@ if ($rating !== '') {
         'Poor' => [0.0, 37.49],
     ];
     if (isset($ranges[$rating])) {
-        $where .= ' AND s.overall_score BETWEEN ? AND ?';
+        $where .= ' AND (s.survey_version = 1 OR s.survey_rated_count > 0) AND s.overall_score BETWEEN ? AND ?';
         $types .= 'dd';
         $params[] = $ranges[$rating][0];
         $params[] = $ranges[$rating][1];
@@ -77,8 +77,9 @@ $total = dbScalarInt($conn, 'SELECT COUNT(*) AS total FROM clients_survey_form s
 $summary = dbFetchOne(
     $conn,
     "SELECT COUNT(*) AS total,
-            ROUND(AVG(s.overall_score), 1) AS average_score,
-            SUM(CASE WHEN s.overall_score >= 87.5 THEN 1 ELSE 0 END) AS excellent_count,
+            ROUND(AVG(CASE WHEN s.survey_version = 1 OR s.survey_rated_count > 0 THEN s.overall_score ELSE NULL END), 1) AS average_score,
+            SUM(CASE WHEN s.survey_version = 1 OR s.survey_rated_count > 0 THEN 1 ELSE 0 END) AS rated_responses,
+            SUM(CASE WHEN (s.survey_version = 1 OR s.survey_rated_count > 0) AND s.overall_score >= 87.5 THEN 1 ELSE 0 END) AS excellent_count,
             COUNT(DISTINCT NULLIF(TRIM(s.project_title), '')) AS project_count
      FROM clients_survey_form s{$where}",
     $types,
@@ -100,6 +101,7 @@ jsonResponse([
         'summary' => [
             'total' => (int) ($summary['total'] ?? 0),
             'average_score' => (float) ($summary['average_score'] ?? 0),
+            'rated_responses' => (int) ($summary['rated_responses'] ?? 0),
             'excellent_count' => (int) ($summary['excellent_count'] ?? 0),
             'project_count' => (int) ($summary['project_count'] ?? 0),
         ],

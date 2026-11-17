@@ -33,6 +33,7 @@ $keyPerson = requireStringField($payload, 'key_person', 'Keyperson name');
 $keyPersonTel = optionalStringField($payload, 'key_persons_tel');
 $keyPersonEmail = optionalEmailField($payload, 'key_persons_email', 'Keyperson email');
 assertRealKeypersonEmail($keyPersonEmail);
+assertKeypersonContactIdentifier($keyPersonTel, $keyPersonEmail);
 $keyPersonAddress = composeAddressWithLocation(
     optionalStringField($payload, 'key_persons_address'),
     optionalStringField($payload, 'key_persons_city'),

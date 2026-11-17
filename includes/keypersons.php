@@ -58,6 +58,21 @@ function assertRealKeypersonEmail(string $email): void
     }
 }
 
+/**
+ * Require an identifier used by the canonical duplicate matcher. A non-empty
+ * phone string is not enough if it has no usable normalized phone number.
+ * The email field is separately validated by optionalEmailField() and
+ * assertRealKeypersonEmail() before this function is called.
+ */
+function assertKeypersonContactIdentifier(string $phone, string $email): void
+{
+    if (normalizeKeypersonEmail($email) !== null || keypersonPhoneKeys($phone) !== []) {
+        return;
+    }
+
+    throw new RuntimeException('Provide at least one valid contact detail: an email address or phone number.', 422);
+}
+
 /** Name tokens without titles, accents or punctuation ("Engr. Benson Omopariola" -> [benson, omopariola]). */
 function keypersonNameTokens(string $name): array
 {

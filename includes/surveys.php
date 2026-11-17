@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/authorization.php';
 require_once __DIR__ . '/dbHelpers.php';
 require_once __DIR__ . '/validation.php';
+require_once __DIR__ . '/stakeholderSurveyV2.php';
 
 const CLIENT_SURVEY_RATINGS = ['Excellent', 'Good', 'Average', 'Poor'];
 const CLIENT_SURVEY_RATING_SCORES = [
@@ -264,6 +265,13 @@ function surveyRatingField(array $payload, string $field, string $label): string
 
 function normalizePublicSurveyPayload(array $payload): array
 {
+    $version = $payload['survey_version'] ?? 1;
+    if ($version === 2 || $version === '2') {
+        return normalizeStakeholderSurveyV2($payload);
+    }
+    if ($version !== 1 && $version !== '1') {
+        throw new RuntimeException('This survey form version is not supported.', 422);
+    }
     if (cleanString($payload['website'] ?? '') !== '' || cleanString($payload['company_url'] ?? '') !== '') {
         throw new RuntimeException('Unable to accept this submission.', 422);
     }
@@ -341,7 +349,15 @@ function castSurveyRecord(array $record): array
         $record[$field] = isset($record[$field]) && $record[$field] !== null ? (int) $record[$field] : null;
     }
     $record['overall_score'] = isset($record['overall_score']) ? (float) $record['overall_score'] : 0.0;
-    $record['score_label'] = surveyScoreLabel((float) $record['overall_score']);
+    $record['survey_version'] = (int) ($record['survey_version'] ?? 1);
+    $record['survey_rated_count'] = (int) ($record['survey_rated_count'] ?? 8);
+    if ($record['survey_version'] === 2) {
+        $decoded = json_decode((string) ($record['survey_answers'] ?? ''), true);
+        $record['survey_answers'] = is_array($decoded) ? $decoded : null;
+    }
+    $record['score_label'] = $record['survey_version'] === 2 && $record['survey_rated_count'] === 0
+        ? 'Not rated'
+        : surveyScoreLabel((float) $record['overall_score']);
     return $record;
 }
 

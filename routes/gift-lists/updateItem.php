@@ -29,6 +29,7 @@ $conn->begin_transaction();
 try {
     $giftListId = ensureGiftList($conn, $giftYear, $ownerPmsAdminId, $actorId);
     upsertGiftListItem($conn, $giftListId, $keyperson, $decision, $rate, $notes, $actorId);
+    recordGiftListPmsStart($conn, $authUser, $ownerPmsAdminId, $giftYear, $giftListId);
     $conn->commit();
 } catch (Throwable $exception) {
     $conn->rollback();

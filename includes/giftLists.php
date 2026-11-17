@@ -96,6 +96,60 @@ function assertGiftListAccessible(mysqli $conn, array $authUser, int $giftListId
     return $row;
 }
 
+/**
+ * A gift list is "started by PMS" only after an actual successful save by its
+ * PMS Admin or a PMS User assigned to that PMS Admin. Global users preparing
+ * the list on someone else's behalf never trigger this marker, even if an
+ * Admin is additionally marked as PMS-enabled.
+ *
+ * The caller supplies the server-resolved owner (not a browser-provided ID).
+ */
+function isGiftListPmsTeamActor(array $actor, int $ownerPmsAdminId): bool
+{
+    if ($ownerPmsAdminId <= 0) {
+        return false;
+    }
+
+    $role = userRole($actor);
+    if ($role === DYNABASE_ROLE_PMS_ADMIN) {
+        return (int) ($actor['id'] ?? 0) === $ownerPmsAdminId;
+    }
+
+    return $role === DYNABASE_ROLE_PMS_USER
+        && (int) ($actor['parent_pms_admin_id'] ?? 0) === $ownerPmsAdminId;
+}
+
+/**
+ * Record the first genuine PMS save, never replacing its actor or timestamp.
+ * Call only after gift-list writes succeeded and before the same transaction
+ * commits. The unique owner/year key also protects concurrent saves.
+ */
+function recordGiftListPmsStart(
+    mysqli $conn,
+    array $actor,
+    int $ownerPmsAdminId,
+    int $giftYear,
+    int $giftListId,
+    string $source = 'main_app'
+): void {
+    if (!isGiftListPmsTeamActor($actor, $ownerPmsAdminId)) {
+        return;
+    }
+    if (!in_array($source, ['main_app', 'pms_portal'], true)) {
+        throw new LogicException('Unknown gift-list activity source.');
+    }
+
+    dbExecute(
+        $conn,
+        'INSERT INTO gift_list_pms_activity
+             (owner_pms_admin_id, gift_year, first_started_by_user_id, first_saved_list_id, first_source)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE id = id',
+        'iiiis',
+        [$ownerPmsAdminId, $giftYear, (int) $actor['id'], $giftListId, $source]
+    )->close();
+}
+
 function validateGiftDecision(mixed $value): string
 {
     $decision = trim((string) $value);

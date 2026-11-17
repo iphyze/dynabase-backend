@@ -21,6 +21,20 @@ $keyPerson = requireStringField($payload, 'key_person', 'Keyperson name');
 $keyPersonTel = optionalStringField($payload, 'key_persons_tel');
 $keyPersonEmail = optionalEmailField($payload, 'key_persons_email', 'Keyperson email');
 assertRealKeypersonEmail($keyPersonEmail);
+// Never remove the last identifier from an existing person. Historic records
+// without either contact can still be edited without changing their identity.
+$originalPhone = (string) ($existingKeyperson['key_persons_tel'] ?? '');
+$originalEmail = (string) ($existingKeyperson['key_persons_email'] ?? '');
+$originalName = (string) ($existingKeyperson['key_person'] ?? '');
+$hadContactIdentifier = normalizeKeypersonEmail($originalEmail) !== null
+    || keypersonPhoneKeys($originalPhone) !== [];
+$identityChanged = normalizeKeypersonName($keyPerson) !== normalizeKeypersonName($originalName)
+    || (int) $clientId !== (int) $existingKeyperson['clients_id']
+    || trim($keyPersonTel) !== trim($originalPhone)
+    || strtolower(trim($keyPersonEmail)) !== strtolower(trim($originalEmail));
+if ($hadContactIdentifier || $identityChanged) {
+    assertKeypersonContactIdentifier($keyPersonTel, $keyPersonEmail);
+}
 $keyPersonAddress = composeAddressWithLocation(
     optionalStringField($payload, 'key_persons_address'),
     optionalStringField($payload, 'key_persons_city'),

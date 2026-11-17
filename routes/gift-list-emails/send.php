@@ -40,9 +40,9 @@ foreach ($recipients as $row) {
     if (!dynabaseIsDeliverableEmail($row['email'])) {
         throw new RuntimeException('A selected user does not have a valid email address.', 422);
     }
-    // Reminders only go to members of a PMS team without a saved annual list.
-    if ($kind === 'reminder' && ((int) ($row['pms_owner_id'] ?? 0) === 0 || (int) ($row['selected_recipients'] ?? 0) > 0)) {
-        throw new RuntimeException('Reminders can only be sent to PMS teams that have not prepared their list.', 422);
+    // A prepared list is still reminder-eligible until the PMS team has personally saved it.
+    if ($kind === 'reminder' && !giftEmailReminderEligible($row)) {
+        throw new RuntimeException('Reminders can only be sent to PMS teams that have not started their list.', 422);
     }
 }
 

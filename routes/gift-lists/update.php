@@ -39,6 +39,7 @@ try {
         [$giftYear, $ownerPmsAdminId, $actorId, $giftListId]
     )->close();
     replaceGiftListItems($conn, $giftListId, $rows, $actorId);
+    recordGiftListPmsStart($conn, $authUser, $ownerPmsAdminId, $giftYear, $giftListId);
 
     writeAuditLog($conn, $authUser, 'gift_list.updated', 'gift_list', $giftListId, [
         'gift_year' => $giftYear,

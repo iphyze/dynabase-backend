@@ -29,7 +29,7 @@ if (count($users) !== 1 || !dynabaseIsDeliverableEmail((string) $users[0]['email
     throw new RuntimeException('The selected recipient is no longer available.', 422);
 }
 $user = $users[0];
-if ($kind === 'reminder' && ((int) ($user['pms_owner_id'] ?? 0) === 0 || (int) ($user['selected_recipients'] ?? 0) > 0)) {
+if ($kind === 'reminder' && !giftEmailReminderEligible($user)) {
     throw new RuntimeException('This recipient is no longer eligible for a reminder. Refresh your selection.', 422);
 }
 

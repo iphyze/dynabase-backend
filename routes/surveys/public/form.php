@@ -34,6 +34,8 @@ jsonResponse([
             'token' => $session['token'],
             'expires_at' => $session['expires_at'],
         ],
+        // Additive metadata; the existing version 1 frontend continues unchanged.
+        'stakeholder_survey_v2' => stakeholderSurveyV2Definition(),
         'turnstile' => [
             'enabled' => envBool('TURNSTILE_ENABLED', false),
             'site_key' => envString('TURNSTILE_SITE_KEY'),

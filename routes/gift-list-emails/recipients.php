@@ -23,7 +23,7 @@ $rows = dbFetchAll($conn,
             u.pms_portal_only, u.parent_pms_admin_id,
             {$owner} AS pms_owner_id,
             CONCAT_WS(' ', parent.first_name, parent.last_name) AS parent_name,
-            gl.id AS gift_list_id,
+            gl.id AS gift_list_id, pms_activity.first_started_at AS pms_started_at,
             (SELECT COUNT(*) FROM gift_list_items gi
              WHERE gi.gift_list_id = gl.id AND gi.gift_decision = 'selected') AS selected_recipients
        {$from}

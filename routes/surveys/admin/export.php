@@ -25,7 +25,7 @@ if ($q !== '') {
 }
 if ($rating !== '') {
     $ranges = ['Excellent' => [87.5,100], 'Good' => [62.5,87.49], 'Average' => [37.5,62.49], 'Poor' => [0,37.49]];
-    if (isset($ranges[$rating])) { $where .= ' AND s.overall_score BETWEEN ? AND ?'; $types .= 'dd'; $params[] = $ranges[$rating][0]; $params[] = $ranges[$rating][1]; }
+    if (isset($ranges[$rating])) { $where .= ' AND (s.survey_version = 1 OR s.survey_rated_count > 0) AND s.overall_score BETWEEN ? AND ?'; $types .= 'dd'; $params[] = $ranges[$rating][0]; $params[] = $ranges[$rating][1]; }
 }
 if ($status !== '') { $where .= ' AND s.response_status = ?'; $types .= 's'; $params[] = $status; }
 if ($clientId > 0) { $where .= ' AND s.client_id = ?'; $types .= 'i'; $params[] = $clientId; }
@@ -34,9 +34,63 @@ if ($dateTo !== '') { $where .= ' AND DATE(s.createdAt) <= ?'; $types .= 's'; $p
 
 $rows = dbFetchAll($conn, surveySelectSql() . $where . ' ORDER BY s.createdAt DESC LIMIT 10000', $types, $params);
 $filename = 'dynabase-client-surveys-' . date('Y-m-d') . '.xlsx';
+// Retain every legacy column in its original order. Append v2-specific data so
+// historical spreadsheets remain compatible and v2 answers are never discarded.
 $exportRows = [];
-$exportHeaders = (['Reference','Company','Project','Respondent','Position','Email','Phone','Location','Overall Score','Quality','Timeline','Expertise','Communication','Resolution','Cleanliness','Safety','Complaint Response','Electrical Services','Mechanical Services','Status','Submitted At']);
+$exportHeaders = [
+    'Reference','Company','Project','Respondent','Position','Email','Phone','Location',
+    'Overall Score','Quality','Timeline','Expertise','Communication','Resolution',
+    'Cleanliness','Safety','Complaint Response','Electrical Services','Mechanical Services',
+    'Status','Submitted At',
+    'Survey Version','Stakeholder Category','Nature of Engagement','Rated Criteria',
+    'Other Stakeholder Category','Other Project Location','Office Address',
+];
+$performanceQuestions = STAKEHOLDER_SURVEY_V2_PERFORMANCE;
+foreach ($performanceQuestions as $item) $exportHeaders[] = 'Performance: ' . $item['title'];
+foreach (STAKEHOLDER_SURVEY_V2_CATEGORIES as $category => $questions) {
+    foreach ($questions as $item) $exportHeaders[] = 'Stakeholder (' . $category . '): ' . $item['title'];
+}
+$exportHeaders[] = 'Service Areas';
+$exportHeaders[] = 'Other Service Area';
+foreach (STAKEHOLDER_SURVEY_V2_SERVICE_QUESTIONS as $item) $exportHeaders[] = 'Service: ' . $item['title'];
+array_push($exportHeaders, 'Relationship Satisfaction', 'Future Engagement', 'Recommendation',
+    'Improvement Priorities', 'Other Improvement Priority');
+
 foreach ($rows as $row) {
-    $exportRows[] = ([$row['submission_reference'],$row['company'],$row['project_title'],$row['filled_by'],$row['position'],$row['email'],$row['phone_number'],$row['location'],$row['overall_score'],$row['quality'],$row['timeline'],$row['expertise'],$row['communication'],$row['resolution'],$row['cleaniness'],$row['safety'],$row['response'],$row['electrical_services'],$row['mechanical_services'],$row['response_status'],$row['createdAt']]);
+    $version = (int) ($row['survey_version'] ?? 1);
+    $answers = $version === 2 ? json_decode((string) ($row['survey_answers'] ?? ''), true) : [];
+    if (!is_array($answers)) $answers = [];
+    $respondent = $answers['respondent'] ?? [];
+    $output = [
+        $row['submission_reference'],$row['company'],$row['project_title'],$row['filled_by'],
+        $row['position'],$row['email'],$row['phone_number'],$row['location'],
+        $version === 2 && (int) $row['survey_rated_count'] === 0 ? 'Not rated' : $row['overall_score'],
+        $row['quality'],$row['timeline'],$row['expertise'],$row['communication'],$row['resolution'],
+        $row['cleaniness'],$row['safety'],$row['response'],$row['electrical_services'],
+        $row['mechanical_services'],$row['response_status'],$row['createdAt'],
+        $version, $row['stakeholder_category'] ?? '', $row['nature_of_engagement'] ?? '',
+        $version === 2 ? $row['survey_rated_count'] : 8,
+        $respondent['stakeholder_other'] ?? '', $respondent['project_location_other'] ?? '',
+        $row['office_address'] ?? '',
+    ];
+    foreach (array_keys($performanceQuestions) as $key) {
+        $output[] = $answers['performance_ratings'][$key] ?? '';
+    }
+    foreach (STAKEHOLDER_SURVEY_V2_CATEGORIES as $questions) {
+        foreach (array_keys($questions) as $key) {
+            $output[] = $answers['stakeholder_ratings'][$key] ?? '';
+        }
+    }
+    $output[] = implode(', ', $answers['service_areas'] ?? []);
+    $output[] = $answers['service_area_other'] ?? '';
+    foreach (array_keys(STAKEHOLDER_SURVEY_V2_SERVICE_QUESTIONS) as $key) {
+        $output[] = $answers['service_ratings'][$key] ?? '';
+    }
+    $output[] = $answers['relationship_satisfaction'] ?? '';
+    $output[] = $answers['future_engagement'] ?? '';
+    $output[] = $answers['recommendation'] ?? '';
+    $output[] = implode(', ', $answers['improvement_priorities'] ?? []);
+    $output[] = $answers['improvement_other'] ?? '';
+    $exportRows[] = $output;
 }
 dynabaseOutputTableXlsx($filename, 'Client Surveys', $exportHeaders, $exportRows);

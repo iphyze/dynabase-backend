@@ -31,6 +31,60 @@ try {
     $ipHash = surveyIpHash();
     $userAgentHash = surveyUserAgentHash();
 
+    if (($data['survey_version'] ?? 1) === 2) {
+        // The new form writes its complete, validated answers to the v2 JSON column.
+        // Legacy NOT NULL fields receive empty strings, never fabricated ratings.
+        // The v1 insert below is left intact for already-open survey links/forms.
+        $fields = [
+            'invitation_id' => $invitationId,
+            'client_id' => $clientId,
+            'project_id' => $projectId,
+            'owner_pms_admin_id' => $ownerId,
+            'submission_reference' => $reference,
+            'overall_score' => $data['overall_score'],
+            'survey_version' => 2,
+            'stakeholder_category' => $data['stakeholder_category'],
+            'nature_of_engagement' => $data['nature_of_engagement'],
+            'survey_rated_count' => $data['survey_rated_count'],
+            'survey_answers' => $data['survey_answers'],
+        ];
+        foreach ([
+            'quality', 'quality_comments', 'timeline', 'timeline_comments',
+            'expertise', 'expertise_comments', 'communication', 'communication_comments',
+            'resolution', 'resolution_comments', 'cleaniness', 'cleaniness_comments',
+            'safety', 'safety_comments', 'response', 'response_comments',
+            'electrical_services', 'mechanical_services',
+        ] as $legacyField) {
+            $fields[$legacyField] = '';
+        }
+        $fields += [
+            'filled_by' => $data['filled_by'],
+            'position' => $data['position'],
+            'office_address' => $data['office_address'],
+            'phone_number' => $data['phone_number'],
+            'fax_number' => '',
+            'project_title' => $data['project_title'],
+            'company' => $data['company'],
+            'location' => $data['location'],
+            'email' => $data['email'],
+            'submission_ip_hash' => $ipHash,
+            'submission_user_agent_hash' => $userAgentHash,
+        ];
+        $columns = array_keys($fields);
+        $identifiers = '`' . implode('`, `', $columns) . '`';
+        $placeholders = implode(', ', array_fill(0, count($columns), '?'));
+        $sql = "INSERT INTO clients_survey_form ({$identifiers}, `response_status`, `createdAt`, `updatedAt`)
+                VALUES ({$placeholders}, 'submitted', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)";
+        $types = '';
+        foreach ($fields as $field => $value) {
+            $types .= is_float($value) ? 'd' : (is_int($value) || $value === null && in_array($field, [
+                'invitation_id', 'client_id', 'project_id', 'owner_pms_admin_id'
+            ], true) ? 'i' : 's');
+        }
+        $stmt = dbExecute($conn, $sql, $types, array_values($fields));
+        $surveyId = (int) $stmt->insert_id;
+        $stmt->close();
+    } else {
     $stmt = $conn->prepare(
         'INSERT INTO clients_survey_form
         (invitation_id, client_id, project_id, owner_pms_admin_id, submission_reference, overall_score,
@@ -84,6 +138,7 @@ try {
     $stmt->execute();
     $surveyId = (int) $stmt->insert_id;
     $stmt->close();
+    }
 
     $sessionUpdate = dbExecute(
         $conn,
