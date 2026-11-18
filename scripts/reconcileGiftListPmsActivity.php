@@ -7,8 +7,8 @@ declare(strict_types=1);
  * php scripts/reconcileGiftListPmsActivity.php --year=2026
  * php scripts/reconcileGiftListPmsActivity.php --year=2026 --apply
  *
- * Audits must describe a completed gift-list save with an exact list, owner and
- * gift-year match. Login events, recipient counts and created_by are not proof.
+ * Audits must describe a completed gift-list save with an exact list and
+ * an audit-time owner/year match. A list may have been reassigned later. Login events, recipient counts and created_by are not proof.
  * Historical team membership is validated against the current relationship;
  * if reassignment occurred, the candidate requires manual review.
  */
@@ -27,12 +27,19 @@ function giftActivityReconcileCandidates(mysqli $conn, int $year): array
     $sql = <<<'SQL'
 SELECT a.id AS audit_id, a.actor_user_id, a.actor_role, a.action,
        a.metadata, a.created_at AS saved_at,
-       gl.id AS gift_list_id, gl.owner_pms_admin_id, gl.gift_year,
+       gl.id AS gift_list_id,
+       -- Historical ownership must come from the successful audit event.
+       -- A list can be reassigned later, so its current owner is not proof
+       -- of which PMS team originally saved it.
+       CAST(JSON_UNQUOTE(JSON_EXTRACT(a.metadata, '$.owner_pms_admin_id')) AS UNSIGNED) AS owner_pms_admin_id,
+       CAST(JSON_UNQUOTE(JSON_EXTRACT(a.metadata, '$.gift_year')) AS UNSIGNED) AS gift_year,
+       gl.owner_pms_admin_id AS current_list_owner_id,
        u.role AS current_role,
        u.parent_pms_admin_id AS current_parent_pms_admin_id
 FROM audit_logs a
 JOIN gift_lists gl ON a.entity_type = 'gift_list'
-    AND a.entity_id = CAST(gl.id AS CHAR)
+    AND a.entity_id REGEXP '^[0-9]+$'
+    AND CAST(a.entity_id AS UNSIGNED) = gl.id
 JOIN users u ON u.id = a.actor_user_id
 WHERE gl.gift_year = ?
   AND a.action IN (
@@ -89,9 +96,11 @@ function giftActivityReconcileMain(mysqli $conn, array $argv): int
     echo 'Candidates: ' . count($plan['candidates']) . ', excluded audit rows: ' . $plan['excluded']
         . ', previously recorded audit rows: ' . $plan['already'] . "\n";
     foreach ($plan['candidates'] as $row) {
-        printf("Owner %d, list %d, actor %d (%s), first save %s, audit #%d\n",
+        $changedOwner = (int) ($row['current_list_owner_id'] ?? 0) !== (int) $row['owner_pms_admin_id'];
+        printf("Owner %d, list %d, actor %d (%s), first save %s, audit #%d%s\n",
             $row['owner_pms_admin_id'], $row['gift_list_id'], $row['actor_user_id'],
-            $row['actor_role'], $row['saved_at'], $row['audit_id']);
+            $row['actor_role'], $row['saved_at'], $row['audit_id'],
+            $changedOwner ? ' [list now belongs to owner ' . $row['current_list_owner_id'] . ']' : '');
     }
     if (!$apply) {
         echo "No database changes made. Review candidates, then rerun with --apply.\n";
