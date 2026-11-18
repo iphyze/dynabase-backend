@@ -43,7 +43,7 @@ $exportHeaders = [
     'Cleanliness','Safety','Complaint Response','Electrical Services','Mechanical Services',
     'Status','Submitted At',
     'Survey Version','Stakeholder Category','Nature of Engagement','Rated Criteria',
-    'Other Stakeholder Category','Other Project Location','Office Address',
+    'Other Stakeholder Category','Other Project Location','Office Address','Project City / State',
 ];
 $performanceQuestions = STAKEHOLDER_SURVEY_V2_PERFORMANCE;
 foreach ($performanceQuestions as $item) $exportHeaders[] = 'Performance: ' . $item['title'];
@@ -72,6 +72,7 @@ foreach ($rows as $row) {
         $version === 2 ? $row['survey_rated_count'] : 8,
         $respondent['stakeholder_other'] ?? '', $respondent['project_location_other'] ?? '',
         $row['office_address'] ?? '',
+        ($respondent['project_city_other'] ?? '') ?: ($respondent['project_city'] ?? ''),
     ];
     foreach (array_keys($performanceQuestions) as $key) {
         $output[] = $answers['performance_ratings'][$key] ?? '';

@@ -205,6 +205,7 @@ $routes = [
     '/submission-register/updates/delete' => 'routes/submission-register/updatesDelete.php',
 
     '/surveys/public/form' => 'routes/surveys/public/form.php',
+    '/surveys/public/cities' => 'routes/surveys/public/cities.php',
     '/surveys/public/submit' => 'routes/surveys/public/submit.php',
     '/surveys/admin/list' => 'routes/surveys/admin/list.php',
     '/surveys/admin/show' => 'routes/surveys/admin/show.php',

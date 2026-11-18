@@ -4,8 +4,8 @@ declare(strict_types=1);
 /**
  * Version 2 of Lambert's Stakeholder Survey (November 2026 PDF).
  * Version 1 responses and the existing public form remain supported.
- * Only Full Name and Company / Organisation are explicitly marked required
- * in the reference document. "Others" descriptions are conditionally required.
+ * The live survey enforces the revised required fields and rating groups.
+ * "Others" descriptions remain conditionally required.
  */
 const STAKEHOLDER_SURVEY_V2_RATINGS = [
     'A' => ['label' => 'Excellent', 'score' => 100],
@@ -124,7 +124,7 @@ function stakeholderSurveyV2Definition(): array
 {
     return [
         'version' => 2,
-        'required_fields' => ['filled_by', 'company'],
+        'required_fields' => ['filled_by', 'email', 'company', 'stakeholder_category', 'project_title', 'location', 'project_city', 'performance_ratings', 'stakeholder_ratings', 'service_areas', 'service_ratings', 'relationship_satisfaction', 'future_engagement', 'recommendation', 'improvement_priorities'],
         'stakeholder_categories' => STAKEHOLDER_SURVEY_V2_CATEGORIES,
         'project_locations' => STAKEHOLDER_SURVEY_V2_LOCATIONS,
         'engagement_types' => STAKEHOLDER_SURVEY_V2_ENGAGEMENTS,
@@ -148,6 +148,15 @@ function surveyV2OptionalChoice(array $payload, string $field, array $allowed, s
     return $value;
 }
 
+function surveyV2RequiredChoice(array $payload, string $field, array $allowed, string $label): string
+{
+    $value = surveyV2OptionalChoice($payload, $field, $allowed, $label);
+    if ($value === '') {
+        throw new RuntimeException(ucfirst($label) . ' is required.', 422);
+    }
+    return $value;
+}
+
 function surveyV2RatingGroup(array $payload, string $field, array $questions): array
 {
     $submitted = $payload[$field] ?? [];
@@ -157,7 +166,10 @@ function surveyV2RatingGroup(array $payload, string $field, array $questions): a
     $clean = [];
     foreach ($questions as $key => $question) {
         $rating = $submitted[$key] ?? '';
-        if (!is_string($rating) || !in_array($rating, ['', 'A', 'B', 'C', 'D', 'N/A'], true)) {
+        if (!is_string($rating) || !in_array($rating, ['A', 'B', 'C', 'D', 'N/A'], true)) {
+            if ($rating === '') {
+                throw new RuntimeException('Please rate ' . $question['title'] . ' (select N/A if not applicable).', 422);
+            }
             throw new RuntimeException('Invalid rating for ' . $question['title'] . '.', 422);
         }
         $clean[$key] = $rating;
@@ -183,6 +195,9 @@ function surveyV2MultiSelect(array $payload, string $field, array $allowed, stri
         }
         $clean[$value] = $value;
     }
+    if ($clean === []) {
+        throw new RuntimeException(ucfirst($label) . ' are required.', 422);
+    }
     return array_values($clean);
 }
 
@@ -202,10 +217,18 @@ function normalizeStakeholderSurveyV2(array $payload): array
     $name = requireStringField($payload, 'filled_by', 'Full name', 255);
     $company = requireStringField($payload, 'company', 'Company / Organisation', 255);
     $email = optionalEmailField($payload, 'email', 'Email address');
-    $category = surveyV2OptionalChoice($payload, 'stakeholder_category', array_keys(STAKEHOLDER_SURVEY_V2_CATEGORIES), 'stakeholder category');
+    if ($email === '') {
+        throw new RuntimeException('Email address is required.', 422);
+    }
+    $category = surveyV2RequiredChoice($payload, 'stakeholder_category', array_keys(STAKEHOLDER_SURVEY_V2_CATEGORIES), 'stakeholder category');
     $categoryOther = surveyV2OtherDetail($payload, 'stakeholder_other', $category === 'Others', 'Other stakeholder category');
-    $location = surveyV2OptionalChoice($payload, 'location', STAKEHOLDER_SURVEY_V2_LOCATIONS, 'project location');
-    $locationOther = surveyV2OtherDetail($payload, 'project_location_other', $location === 'Others', 'Other project location');
+    $location = surveyV2RequiredChoice($payload, 'location', STAKEHOLDER_SURVEY_V2_LOCATIONS, 'project location');
+    $locationOther = surveyV2OtherDetail($payload, 'project_location_other', $location === 'Others', 'Other project country');
+    $projectCity = optionalStringField($payload, 'project_city', 150);
+    if ($location !== 'Others' && $projectCity === '') {
+        throw new RuntimeException('Project city / state is required.', 422);
+    }
+    $projectCityOther = surveyV2OtherDetail($payload, 'project_city_other', $location === 'Others' || $projectCity === 'Others', 'Other project city / state');
     $engagement = surveyV2OptionalChoice($payload, 'nature_of_engagement', STAKEHOLDER_SURVEY_V2_ENGAGEMENTS, 'nature of engagement');
 
     $performance = surveyV2RatingGroup($payload, 'performance_ratings', STAKEHOLDER_SURVEY_V2_PERFORMANCE);
@@ -221,9 +244,9 @@ function normalizeStakeholderSurveyV2(array $payload): array
     $serviceOther = surveyV2OtherDetail($payload, 'service_area_other', in_array('Others', $services, true), 'Other service area');
     $serviceRatings = surveyV2RatingGroup($payload, 'service_ratings', STAKEHOLDER_SURVEY_V2_SERVICE_QUESTIONS);
 
-    $satisfaction = surveyV2OptionalChoice($payload, 'relationship_satisfaction', STAKEHOLDER_SURVEY_V2_SATISFACTION, 'relationship satisfaction');
-    $future = surveyV2OptionalChoice($payload, 'future_engagement', STAKEHOLDER_SURVEY_V2_FUTURE_ENGAGEMENT, 'future engagement');
-    $recommendation = surveyV2OptionalChoice($payload, 'recommendation', ['A', 'B', 'C', 'D'], 'recommendation rating');
+    $satisfaction = surveyV2RequiredChoice($payload, 'relationship_satisfaction', STAKEHOLDER_SURVEY_V2_SATISFACTION, 'relationship satisfaction');
+    $future = surveyV2RequiredChoice($payload, 'future_engagement', STAKEHOLDER_SURVEY_V2_FUTURE_ENGAGEMENT, 'future engagement');
+    $recommendation = surveyV2RequiredChoice($payload, 'recommendation', ['A', 'B', 'C', 'D'], 'recommendation rating');
     $improvements = surveyV2MultiSelect($payload, 'improvement_priorities', STAKEHOLDER_SURVEY_V2_IMPROVEMENTS, 'improvement priorities');
     if (in_array('No major improvement required', $improvements, true) && count($improvements) > 1) {
         throw new RuntimeException('No major improvement required cannot be combined with other improvement priorities.', 422);
@@ -240,7 +263,7 @@ function normalizeStakeholderSurveyV2(array $payload): array
     $overallScore = $ratedCount > 0 ? round(array_sum($ratedScores) / $ratedCount, 2) : 0.0;
 
     $position = optionalStringField($payload, 'position', 255);
-    $projectTitle = optionalStringField($payload, 'project_title', 255);
+    $projectTitle = requireStringField($payload, 'project_title', 'Project name', 255);
     $officeAddress = optionalStringField($payload, 'office_address', 1000);
     $phone = optionalStringField($payload, 'phone_number', 80);
 
@@ -255,6 +278,8 @@ function normalizeStakeholderSurveyV2(array $payload): array
             'project_title' => $projectTitle,
             'location' => $location,
             'project_location_other' => $locationOther,
+            'project_city' => $projectCity,
+            'project_city_other' => $projectCityOther,
             'nature_of_engagement' => $engagement,
             'office_address' => $officeAddress,
             'phone_number' => $phone,
