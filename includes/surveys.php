@@ -5,6 +5,7 @@ require_once __DIR__ . '/authorization.php';
 require_once __DIR__ . '/dbHelpers.php';
 require_once __DIR__ . '/validation.php';
 require_once __DIR__ . '/stakeholderSurveyV2.php';
+require_once __DIR__ . '/surveyWeightedScoring.php';
 
 const CLIENT_SURVEY_RATINGS = ['Excellent', 'Good', 'Average', 'Poor'];
 const CLIENT_SURVEY_RATING_SCORES = [
@@ -138,14 +139,15 @@ function createSurveyFormSession(mysqli $conn, int $invitationId): array
     $userAgentHash = surveyUserAgentHash();
     $ttlMinutes = max(15, min((int) envString('SURVEY_FORM_SESSION_MINUTES', '120'), 360));
     $expiresAt = date('Y-m-d H:i:s', time() + ($ttlMinutes * 60));
+    $scoringConfigurationId = surveyActiveScoringConfigurationId($conn);
 
     $stmt = dbExecute(
         $conn,
         'INSERT INTO client_survey_form_sessions
-         (invitation_id, session_token_hash, ip_hash, user_agent_hash, expires_at)
-         VALUES (?, ?, ?, ?, ?)',
-        'issss',
-        [$invitationId, $hash, $ipHash, $userAgentHash, $expiresAt]
+         (invitation_id, session_token_hash, ip_hash, user_agent_hash, expires_at, scoring_configuration_id)
+         VALUES (?, ?, ?, ?, ?, ?)',
+        'issssi',
+        [$invitationId, $hash, $ipHash, $userAgentHash, $expiresAt, $scoringConfigurationId]
     );
     $sessionId = (int) $stmt->insert_id;
     $stmt->close();
@@ -355,9 +357,15 @@ function castSurveyRecord(array $record): array
         $decoded = json_decode((string) ($record['survey_answers'] ?? ''), true);
         $record['survey_answers'] = is_array($decoded) ? $decoded : null;
     }
+    $record['scoring_configuration_id'] = isset($record['scoring_configuration_id']) ? (int) $record['scoring_configuration_id'] : null;
+    if (!empty($record['survey_scoring_breakdown'])) {
+        $breakdown = json_decode((string) $record['survey_scoring_breakdown'], true);
+        $record['survey_scoring_breakdown'] = is_array($breakdown) ? $breakdown : null;
+    }
     $record['score_label'] = $record['survey_version'] === 2 && $record['survey_rated_count'] === 0
         ? 'Not rated'
-        : surveyScoreLabel((float) $record['overall_score']);
+        : (surveyScoreLabel((float) $record['overall_score']) === 'Poor' && $record['survey_version'] === 2
+            ? 'Needs Improvement' : surveyScoreLabel((float) $record['overall_score']));
     return $record;
 }
 
@@ -377,7 +385,11 @@ function assertSurveyAccessible(mysqli $conn, array $authUser, int $id): array
 
 function invitationSelectSql(): string
 {
-    return "SELECT i.id, i.client_id, i.project_id, i.recipient_name, i.recipient_email,
+    return "SELECT i.id, i.client_id, i.project_id, i.link_scope, i.recipient_name, i.recipient_email,
+            (SELECT COUNT(*) FROM client_survey_invitation_recipients r WHERE r.invitation_id = i.id) AS email_recipient_count,
+            (SELECT COUNT(*) FROM client_survey_invitation_recipients r WHERE r.invitation_id = i.id AND r.mail_status = 'accepted') AS email_accepted_count,
+            (SELECT COUNT(*) FROM clients_survey_form s WHERE s.invitation_id = i.id AND s.deleted_at IS NULL) AS response_count,
+            CASE WHEN i.token_ciphertext IS NOT NULL AND i.token_ciphertext <> '' THEN 1 ELSE 0 END AS has_stored_link,
             i.client_name_snapshot, i.project_title_snapshot, i.owner_pms_admin_id,
             i.expires_at, i.max_submissions, i.submission_count, i.status, i.last_accessed_at,
             i.created_by, i.created_at, i.updated_at,
@@ -397,6 +409,10 @@ function castSurveyInvitation(array $row): array
     foreach (['id', 'client_id', 'project_id', 'owner_pms_admin_id', 'created_by', 'max_submissions', 'submission_count'] as $field) {
         $row[$field] = isset($row[$field]) && $row[$field] !== null ? (int) $row[$field] : null;
     }
+    foreach (['response_count', 'email_recipient_count', 'email_accepted_count', 'has_stored_link'] as $field) {
+        if (array_key_exists($field, $row)) $row[$field] = (int) $row[$field];
+    }
+    $row['remaining_submissions'] = max(0, (int) ($row['max_submissions'] ?? 0) - (int) ($row['submission_count'] ?? 0));
     $row['effective_status'] = surveyInvitationStatus($row);
     return $row;
 }

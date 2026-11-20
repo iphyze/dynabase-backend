@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../../includes/xlsxReport.php';
 require_once __DIR__ . '/../../../includes/request.php';
 require_once __DIR__ . '/../../../includes/surveys.php';
+require_once __DIR__ . '/../../../includes/surveyReporting.php';
 
 requireMethod('GET');
 $authUser = authenticateUser();
@@ -12,6 +13,10 @@ $q = cleanString($_GET['q'] ?? $_GET['search'] ?? '');
 $rating = cleanString($_GET['rating'] ?? '');
 $status = cleanString($_GET['status'] ?? '');
 $clientId = (int) ($_GET['client_id'] ?? 0);
+$invitationId = (int) ($_GET['invitation_id'] ?? 0);
+if ($invitationId > 0 && !dbFetchOne($conn, 'SELECT id FROM client_survey_invitations WHERE id = ? LIMIT 1', 'i', [$invitationId])) {
+    throw new RuntimeException('Survey link not found.', 404);
+}
 $dateFrom = cleanString($_GET['date_from'] ?? '');
 $dateTo = cleanString($_GET['date_to'] ?? '');
 $where = ' WHERE s.deleted_at IS NULL';
@@ -29,14 +34,18 @@ if ($rating !== '') {
 }
 if ($status !== '') { $where .= ' AND s.response_status = ?'; $types .= 's'; $params[] = $status; }
 if ($clientId > 0) { $where .= ' AND s.client_id = ?'; $types .= 'i'; $params[] = $clientId; }
+if ($invitationId > 0) { $where .= ' AND s.invitation_id = ?'; $types .= 'i'; $params[] = $invitationId; }
 if ($dateFrom !== '') { $where .= ' AND DATE(s.createdAt) >= ?'; $types .= 's'; $params[] = $dateFrom; }
 if ($dateTo !== '') { $where .= ' AND DATE(s.createdAt) <= ?'; $types .= 's'; $params[] = $dateTo; }
 
 $rows = dbFetchAll($conn, surveySelectSql() . $where . ' ORDER BY s.createdAt DESC LIMIT 10000', $types, $params);
-$filename = 'dynabase-client-surveys-' . date('Y-m-d') . '.xlsx';
+$filename = $invitationId > 0
+    ? 'dynabase-survey-link-' . $invitationId . '-responses-' . date('Y-m-d') . '.xlsx'
+    : 'dynabase-client-surveys-' . date('Y-m-d') . '.xlsx';
 // Retain every legacy column in its original order. Append v2-specific data so
 // historical spreadsheets remain compatible and v2 answers are never discarded.
 $exportRows = [];
+$scoringRows = [];
 $exportHeaders = [
     'Reference','Company','Project','Respondent','Position','Email','Phone','Location',
     'Overall Score','Quality','Timeline','Expertise','Communication','Resolution',
@@ -55,6 +64,11 @@ $exportHeaders[] = 'Other Service Area';
 foreach (STAKEHOLDER_SURVEY_V2_SERVICE_QUESTIONS as $item) $exportHeaders[] = 'Service: ' . $item['title'];
 array_push($exportHeaders, 'Relationship Satisfaction', 'Future Engagement', 'Recommendation',
     'Improvement Priorities', 'Other Improvement Priority');
+// Retain all existing report columns in order; new weighted reporting fields come last.
+array_push($exportHeaders, 'Scoring Method', 'Scoring Configuration Version', 'Scoring Configuration ID',
+    'Performance Allocation (%)', 'Performance Contribution (pp)',
+    'Stakeholder Allocation (%)', 'Stakeholder Contribution (pp)',
+    'Service Allocation (%)', 'Service Contribution (pp)', 'Unrounded Overall Contribution (%)');
 
 foreach ($rows as $row) {
     $version = (int) ($row['survey_version'] ?? 1);
@@ -92,6 +106,31 @@ foreach ($rows as $row) {
     $output[] = $answers['recommendation'] ?? '';
     $output[] = implode(', ', $answers['improvement_priorities'] ?? []);
     $output[] = $answers['improvement_other'] ?? '';
+    $snapshot = surveyReportingSnapshot($row);
+    $output[] = surveyReportingMethod($row);
+    $output[] = $snapshot['version_number'] ?? '';
+    $output[] = $row['scoring_configuration_id'] ?? '';
+    foreach (['performance', 'stakeholder', 'service'] as $section) {
+        $output[] = $snapshot['sections'][$section]['allocation_percent'] ?? '';
+        $output[] = $snapshot['sections'][$section]['score_percent'] ?? '';
+    }
+    $output[] = $snapshot['overall_score_percent'] ?? '';
     $exportRows[] = $output;
+    $scoringRows[] = surveyReportingQuestionRow($row, $snapshot);
 }
-dynabaseOutputTableXlsx($filename, 'Client Surveys', $exportHeaders, $exportRows);
+dynabaseOutputXlsx($filename, [
+    surveyReportingTableSheet('Client Surveys', $exportHeaders, $exportRows),
+    surveyReportingTableSheet('Scoring Details', array_merge([
+        'Reference', 'Company', 'Project', 'Respondent', 'Stakeholder Category',
+        'Scoring Method', 'Configuration Version', 'Configuration ID',
+        'Performance Allocation (%)', 'Performance Contribution (pp)',
+        'Stakeholder Allocation (%)', 'Stakeholder Contribution (pp)',
+        'Service Allocation (%)', 'Service Contribution (pp)',
+        'Unrounded Overall Score (%)',
+    ], array_map(static fn ($q) => 'Performance: ' . $q['title'] . ' (rating / factor / weight / contribution)',
+        array_values(STAKEHOLDER_SURVEY_V2_PERFORMANCE)), [
+        'Stakeholder Question 1 (title / rating / factor / weight / contribution)',
+        'Stakeholder Question 2 (title / rating / factor / weight / contribution)',
+    ], array_map(static fn ($q) => 'Service: ' . $q['title'] . ' (rating / factor / weight / contribution)',
+        array_values(STAKEHOLDER_SURVEY_V2_SERVICE_QUESTIONS)), ['Notes']), $scoringRows),
+], ['title' => 'Client Surveys', 'subject' => 'Client survey responses and stored scoring breakdowns']);

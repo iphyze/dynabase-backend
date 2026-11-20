@@ -78,8 +78,10 @@ function dynabasePermissionCatalog(): array
         'Client Surveys' => [
             ['key' => 'client_surveys.view', 'label' => 'View client surveys', 'description' => 'Review survey responses and invitations.'],
             ['key' => 'client_surveys.create', 'label' => 'Create survey invitations', 'description' => 'Create reusable or targeted survey links.'],
-            ['key' => 'client_surveys.delete', 'label' => 'Delete survey records', 'description' => 'Remove survey responses or revoke invitations.'],
+            ['key' => 'client_surveys.delete', 'label' => 'Delete survey records', 'description' => 'Delete survey responses, revoke invitations, or permanently delete links with their responses.'],
             ['key' => 'client_surveys.export', 'label' => 'Export survey results', 'description' => 'Download survey reports.'],
+            ['key' => 'client_surveys.scoring.manage', 'label' => 'Manage survey scoring', 'description' => 'Configure and activate versioned survey scoring weights.'],
+            ['key' => 'client_surveys.ai.summarize', 'label' => 'Generate AI survey summaries', 'description' => 'Use AI to summarize individual feedback or multiple survey links. Sends anonymized ratings and comments to the AI provider.'],
         ],
         'Influence Intelligence' => [
             ['key' => 'influence_logs.view', 'label' => 'View influence logs', 'description' => 'Open relationship notes and influence history.'],
@@ -214,6 +216,8 @@ function dynabasePermissionDependencies(): array
         'client_surveys.create' => ['client_surveys.view'],
         'client_surveys.delete' => ['client_surveys.view'],
         'client_surveys.export' => ['client_surveys.view'],
+        'client_surveys.scoring.manage' => ['client_surveys.view'],
+        'client_surveys.ai.summarize' => ['client_surveys.view'],
 
         'influence_logs.create' => ['influence_logs.view'],
         'influence_logs.edit' => ['influence_logs.view'],

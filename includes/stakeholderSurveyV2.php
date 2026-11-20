@@ -11,8 +11,7 @@ const STAKEHOLDER_SURVEY_V2_RATINGS = [
     'A' => ['label' => 'Excellent', 'score' => 100],
     'B' => ['label' => 'Good', 'score' => 75],
     'C' => ['label' => 'Average', 'score' => 50],
-    'D' => ['label' => 'Poor', 'score' => 25],
-    'N/A' => ['label' => 'Not Applicable', 'score' => null],
+    'D' => ['label' => 'Needs Improvement', 'score' => 25],
 ];
 const STAKEHOLDER_SURVEY_V2_PERFORMANCE = [
     'communication' => [
@@ -128,7 +127,7 @@ function stakeholderSurveyV2Definition(): array
         'stakeholder_categories' => STAKEHOLDER_SURVEY_V2_CATEGORIES,
         'project_locations' => STAKEHOLDER_SURVEY_V2_LOCATIONS,
         'engagement_types' => STAKEHOLDER_SURVEY_V2_ENGAGEMENTS,
-        'ratings' => STAKEHOLDER_SURVEY_V2_RATINGS,
+        'ratings' => array_map(static fn (array $rating): array => ['label' => $rating['label']], STAKEHOLDER_SURVEY_V2_RATINGS),
         'performance_questions' => STAKEHOLDER_SURVEY_V2_PERFORMANCE,
         'service_areas' => STAKEHOLDER_SURVEY_V2_SERVICES,
         'service_questions' => STAKEHOLDER_SURVEY_V2_SERVICE_QUESTIONS,
@@ -166,9 +165,9 @@ function surveyV2RatingGroup(array $payload, string $field, array $questions): a
     $clean = [];
     foreach ($questions as $key => $question) {
         $rating = $submitted[$key] ?? '';
-        if (!is_string($rating) || !in_array($rating, ['A', 'B', 'C', 'D', 'N/A'], true)) {
+        if (!is_string($rating) || !in_array($rating, ['A', 'B', 'C', 'D'], true)) {
             if ($rating === '') {
-                throw new RuntimeException('Please rate ' . $question['title'] . ' (select N/A if not applicable).', 422);
+                throw new RuntimeException('Please rate ' . $question['title'] . '.', 422);
             }
             throw new RuntimeException('Invalid rating for ' . $question['title'] . '.', 422);
         }
@@ -253,14 +252,9 @@ function normalizeStakeholderSurveyV2(array $payload): array
     }
     $improvementOther = surveyV2OtherDetail($payload, 'improvement_other', in_array('Others', $improvements, true), 'Other improvement priority');
 
-    $ratedScores = [];
-    foreach (array_merge(array_values($performance), array_values($stakeholder), array_values($serviceRatings)) as $rating) {
-        if ($rating !== '' && $rating !== 'N/A') {
-            $ratedScores[] = STAKEHOLDER_SURVEY_V2_RATINGS[$rating]['score'];
-        }
-    }
-    $ratedCount = count($ratedScores);
-    $overallScore = $ratedCount > 0 ? round(array_sum($ratedScores) / $ratedCount, 2) : 0.0;
+    $ratedCount = count($performance) + count($stakeholder) + count($serviceRatings);
+    // Actual weighted score is calculated on the backend from the session-bound version.
+    $overallScore = 0.0;
 
     $position = optionalStringField($payload, 'position', 255);
     $projectTitle = requireStringField($payload, 'project_title', 'Project name', 255);

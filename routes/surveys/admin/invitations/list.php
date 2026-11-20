@@ -15,10 +15,10 @@ $where = ' WHERE 1 = 1';
 $types = '';
 $params = [];
 if ($q !== '') {
-    $where .= ' AND (i.recipient_name LIKE ? OR i.recipient_email LIKE ? OR i.client_name_snapshot LIKE ? OR i.project_title_snapshot LIKE ? OR c.clients_name LIKE ? OR p.project_title LIKE ?)';
+    $where .= ' AND (i.recipient_name LIKE ? OR i.recipient_email LIKE ? OR i.client_name_snapshot LIKE ? OR i.project_title_snapshot LIKE ? OR c.clients_name LIKE ? OR p.project_title LIKE ? OR EXISTS (SELECT 1 FROM client_survey_invitation_recipients r WHERE r.invitation_id = i.id AND r.recipient_email LIKE ?))';
     $like = '%' . $q . '%';
-    $types .= 'ssssss';
-    $params = array_merge($params, array_fill(0, 6, $like));
+    $types .= 'sssssss';
+    $params = array_merge($params, array_fill(0, 7, $like));
 }
 if ($status === 'active') {
     $where .= " AND i.status = 'active' AND i.expires_at >= NOW() AND i.submission_count < i.max_submissions";

@@ -32,6 +32,19 @@ try {
     $userAgentHash = surveyUserAgentHash();
 
     if (($data['survey_version'] ?? 1) === 2) {
+        // Older sessions were created before scoring-version binding. They retain
+        // the original legacy calculation rather than being assigned a newer version.
+        $configurationId = !empty($session['scoring_configuration_id']) ? (int) $session['scoring_configuration_id'] : null;
+        if ($configurationId !== null) {
+            $weighted = surveyCalculateWeightedScore($conn, $configurationId, $data);
+            $data['overall_score'] = $weighted['score'];
+            $data['survey_scoring_breakdown'] = $weighted['json'];
+        } else {
+            $answers = json_decode($data['survey_answers'], true, 512, JSON_THROW_ON_ERROR);
+            $factors = ['A' => 100, 'B' => 75, 'C' => 50, 'D' => 25];
+            $ratings = array_merge(array_values($answers['performance_ratings']), array_values($answers['stakeholder_ratings']), array_values($answers['service_ratings']));
+            $data['overall_score'] = round(array_sum(array_map(static fn ($rating) => $factors[$rating], $ratings)) / count($ratings), 2);
+        }
         // The new form writes its complete, validated answers to the v2 JSON column.
         // Legacy NOT NULL fields receive empty strings, never fabricated ratings.
         // The v1 insert below is left intact for already-open survey links/forms.
@@ -47,6 +60,8 @@ try {
             'nature_of_engagement' => $data['nature_of_engagement'],
             'survey_rated_count' => $data['survey_rated_count'],
             'survey_answers' => $data['survey_answers'],
+            'scoring_configuration_id' => $configurationId,
+            'survey_scoring_breakdown' => $data['survey_scoring_breakdown'] ?? null,
         ];
         foreach ([
             'quality', 'quality_comments', 'timeline', 'timeline_comments',
@@ -78,7 +93,7 @@ try {
         $types = '';
         foreach ($fields as $field => $value) {
             $types .= is_float($value) ? 'd' : (is_int($value) || $value === null && in_array($field, [
-                'invitation_id', 'client_id', 'project_id', 'owner_pms_admin_id'
+                'invitation_id', 'client_id', 'project_id', 'owner_pms_admin_id', 'scoring_configuration_id'
             ], true) ? 'i' : 's');
         }
         $stmt = dbExecute($conn, $sql, $types, array_values($fields));
