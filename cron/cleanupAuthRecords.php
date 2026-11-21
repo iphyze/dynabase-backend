@@ -66,6 +66,11 @@ $result = [
         'DELETE FROM pms_portal_login_requests WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
         $attemptDays
     ),
+    'password_reset_requests_deleted' => $purge(
+        $conn,
+        'DELETE FROM auth_password_reset_requests WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+        $attemptDays
+    ),
     'retention_days' => ['sessions' => $sessionDays, 'login_attempts' => $attemptDays],
     'ran_at' => date('c'),
 ];

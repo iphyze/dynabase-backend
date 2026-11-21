@@ -5,3 +5,5 @@
 .env.turbify
 client-surveys.env.example
 /*.sql
+/dynabase-ai-storage
+/storage

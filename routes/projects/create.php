@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../includes/projects.php';
+require_once __DIR__ . '/../../includes/lookup.php';
 
 requireMethod('POST');
 $authUser = authenticateUser();
@@ -11,6 +12,43 @@ $project = normalizeProjectPayload($payload, false);
 $lostOnCreate = isLostProjectStatus($project['project_status']) || isLostProjectProgress($project['progress']);
 $lossComment = normalizeProjectLossComment($payload, $lostOnCreate);
 $clients = normalizeProjectClients($payload, true);
+// Only AI-reviewed tender requests contain this marker. Ordinary tender
+// creation remains unchanged. Validate every selected client/key person pair
+// against active, permission-scoped records before starting any INSERT.
+if (($payload['ai_reviewed_clients'] ?? false) === true) {
+    $cityTable = cityTableForCountry($project['project_country']);
+    $city = $cityTable !== null
+        ? dbFetchOne($conn, "SELECT id FROM {$cityTable} WHERE city_name=? LIMIT 1", 's', [$project['project_city']])
+        : null;
+    if (!$city) {
+        throw new RuntimeException('Select a valid city for the selected tender country.', 422);
+    }
+    $selectedRows = $payload['clients'] ?? null;
+    if (!is_array($selectedRows) || !$selectedRows || count($selectedRows) !== count($clients)) {
+        throw new RuntimeException('Select a saved client and Key Person for each tender relationship.', 422);
+    }
+    foreach ($selectedRows as $position => $selected) {
+        if (!is_array($selected)) throw new RuntimeException('Invalid tender relationship selection.', 422);
+        $clientId = (int) ($selected['client_id'] ?? 0);
+        $personId = (int) ($selected['keyperson_id'] ?? 0);
+        if ($clientId <= 0 || $personId <= 0 || $clientId !== (int) $clients[$position]['client_id']) {
+            throw new RuntimeException('Choose a saved client and its existing Key Person.', 422);
+        }
+        [$clientScope, $clientTypes, $clientParams] = appendScopedWhere($authUser, 'c', 'i', [$clientId]);
+        $client = dbFetchOne($conn,
+            "SELECT c.id,c.clients_name FROM clients_table c WHERE c.id=? AND c.status='active'{$clientScope} LIMIT 1",
+            $clientTypes, $clientParams);
+        [$personScope, $personTypes, $personParams] = appendKeypersonScopedWhere($authUser, 'k', 'ii', [$personId, $clientId]);
+        $person = dbFetchOne($conn,
+            "SELECT k.id,k.key_person FROM keypersons_table k WHERE k.id=? AND k.clients_id=? AND k.status='active'{$personScope} LIMIT 1",
+            $personTypes, $personParams);
+        if (!$client || !$person
+            || strcasecmp((string) $client['clients_name'], (string) $clients[$position]['client_name']) !== 0
+            || strcasecmp((string) $person['key_person'], (string) $clients[$position]['keyperson']) !== 0) {
+            throw new RuntimeException('The selected client or Key Person is no longer active, accessible or correctly linked. Please reselect both.', 422);
+        }
+    }
+}
 $tenderDocuments = normalizeDocumentRows($payload, 'tender_documents', 'tender_document', 'tender documents');
 $technicalDocuments = normalizeDocumentRows($payload, 'technical_documents', 'technical_document', 'technical documents');
 $ownerPmsAdminId = resolveAssignableOwnerPmsAdminId($conn, $authUser, isset($payload['owner_pms_admin_id']) ? (int) $payload['owner_pms_admin_id'] : null);

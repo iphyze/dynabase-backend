@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../includes/request.php';
 require_once __DIR__ . '/../../includes/authorization.php';
+require_once __DIR__ . '/../../includes/permissions.php';
 require_once __DIR__ . '/../../includes/ownership.php';
 require_once __DIR__ . '/../../includes/validation.php';
 require_once __DIR__ . '/../../includes/audit.php';
@@ -10,6 +11,7 @@ require_once __DIR__ . '/../../includes/dbHelpers.php';
 
 requireMethod('POST');
 $authUser = authenticateUser();
+requirePermission($conn, $authUser, 'clients.create');
 $payload = readJsonBody();
 
 $clientsName = requireStringField($payload, 'clients_name', 'Client name');
@@ -23,7 +25,24 @@ $clientsAddress = composeAddressWithLocation(
     $clientsCountry
 );
 $clientsHqLocation = optionalStringField($payload, 'clients_hq_location') ?: $clientsCity;
-$clientsCategory = requireStringField($payload, 'clients_category', 'Client category');
+// The composed address can exceed the DB column even when its inputs do not.
+$addressLength = function_exists('mb_strlen') ? mb_strlen($clientsAddress) : strlen($clientsAddress);
+if ($addressLength > 255) {
+    throw new RuntimeException('Client address (including city and country) must not exceed 255 characters.', 422);
+}
+$requestedCategory = requireStringField($payload, 'clients_category', 'Client category');
+// clients_table.clients_category has a foreign key to clients_category_table.
+// Reject invented AI categories before INSERT instead of surfacing SQL error 1452 as HTTP 500.
+$category = dbFetchOne(
+    $conn,
+    'SELECT category_name FROM clients_category_table WHERE category_name = ? LIMIT 1',
+    's',
+    [$requestedCategory]
+);
+if (!$category) {
+    throw new RuntimeException('The selected client category is not available. Choose an existing category.', 422);
+}
+$clientsCategory = (string) $category['category_name'];
 $requestedOwnerPmsAdminId = isset($payload['owner_pms_admin_id']) ? (int) $payload['owner_pms_admin_id'] : null;
 $ownerPmsAdminId = resolveClientOwnerPmsAdminId($conn, $authUser, $requestedOwnerPmsAdminId);
 
@@ -60,6 +79,11 @@ $stmt->close();
 } catch (mysqli_sql_exception $exception) {
     if (isDuplicateKeyError($exception)) {
         assertClientNameAvailable($conn, $clientsName);   // responds 409 with the record that won the race
+    }
+    // If a category or owner was removed after validation, report a conflict,
+    // not an opaque 500. Unknown SQL errors still go through normal server logging.
+    if ((int) $exception->getCode() === 1452) {
+        throw new RuntimeException('The client category or PMS Admin is no longer available. Refresh and try again.', 422);
     }
     throw $exception;
 }

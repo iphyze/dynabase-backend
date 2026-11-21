@@ -1,0 +1,25 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__.'/../../includes/request.php';
+require_once __DIR__.'/../../includes/aiChat.php';
+requireMethod('GET');
+$user=authenticateUser();
+$id=filter_var($_GET['id']??null,FILTER_VALIDATE_INT,['options'=>['min_range'=>1]]);
+if ($id===false) throw new RuntimeException('Invalid file ID.',422);
+$row=dbFetchOne($conn,'SELECT f.* FROM dynabase_ai_chat_files f JOIN dynabase_ai_chat_threads t ON t.id=f.thread_id WHERE f.id=? AND f.user_id=? AND t.user_id=? LIMIT 1','iii',[(int)$id,(int)$user['id'],(int)$user['id']]);
+if (!$row) throw new RuntimeException('File not found.',404);
+$path=aiChatFilePath((string)$row['storage_name']);
+if (!is_file($path) || !is_readable($path)) throw new RuntimeException('File is no longer available.',404);
+$name=aiChatCleanFileName((string)$row['original_name']);
+$mime= (string)($row['mime_type']?:'application/octet-stream');
+writeAuditLog($conn,$user,'ai_chat.file_downloaded','ai_chat_file',(int)$id,['extension'=>$row['extension'],'kind'=>$row['kind']]);
+while(ob_get_level()>0) ob_end_clean();
+header_remove('Content-Type');
+header('Content-Type: '.$mime);
+header('Content-Length: '.(string)filesize($path));
+header('Content-Disposition: attachment; filename="'.addcslashes($name,'"\\').'"; filename*=UTF-8\'\''.rawurlencode($name));
+header('Cache-Control: private, no-store, max-age=0');
+header('Pragma: no-cache');
+header('X-Content-Type-Options: nosniff');
+readfile($path);
+exit;

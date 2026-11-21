@@ -33,7 +33,9 @@ if (!$canViewFullDirectory) {
         $canViewFullDirectory = userHasPermission($conn, $authUser, 'clients.create')
             || userHasPermission($conn, $authUser, 'clients.edit')
             || userHasPermission($conn, $authUser, 'keypersons.create')
-            || userHasPermission($conn, $authUser, 'keypersons.edit');
+            || userHasPermission($conn, $authUser, 'keypersons.edit')
+            || userHasPermission($conn, $authUser, 'gift_lists.create')
+            || userHasPermission($conn, $authUser, 'gift_lists.edit');
     }
 }
 
