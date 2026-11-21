@@ -41,8 +41,18 @@ function surveyReportingTableSheet(string $name, array $headers, array $rows): a
         $style = $i % 2 === 0 ? DYNABASE_XLSX_STYLE_BODY : DYNABASE_XLSX_STYLE_BODY_ALT;
         $cells = [];
         foreach (array_values($row) as $j => $value) {
-            $cells[] = ['value' => $value ?? '', 'style' => $name === 'Scoring Details' && $j >= 15 ? DYNABASE_XLSX_STYLE_WRAP : $style,
-                'type' => is_int($value) || is_float($value) ? 'number' : 'string'];
+            $heading = (string) ($headers[$j] ?? '');
+            // Format only visible score/weight columns. Keep raw numeric precision
+            // in Excel for formulas and audits, and preserve all existing columns.
+            $scoreColumn = in_array($heading, ['Overall Score', 'Unrounded Overall Contribution (%)', 'Unrounded Overall Score (%)'], true)
+                || (bool) preg_match('/^(Performance|Stakeholder|Service) (Allocation \(\%\)|Contribution \(pp\))$/', $heading);
+            $numericScore = $scoreColumn && is_numeric($value);
+            $cells[] = [
+                'value' => $numericScore ? (float) $value : ($value ?? ''),
+                'style' => $numericScore ? DYNABASE_XLSX_STYLE_NUMBER_TWO_DECIMALS
+                    : ($name === 'Scoring Details' && $j >= 15 ? DYNABASE_XLSX_STYLE_WRAP : $style),
+                'type' => $numericScore || is_int($value) || is_float($value) ? 'number' : 'string',
+            ];
             if ($i < 200 && is_string($value)) $widths[$j] = max($widths[$j] ?? 10, min(45, mb_strlen($value) + 2));
         }
         $sheetRows[] = $cells;
@@ -98,11 +108,17 @@ function surveyReportingQuestionRow(array $record, ?array $snapshot): array
     return $row;
 }
 
+function surveyReportingDisplayPercent(mixed $value): string
+{
+    if ($value === null || $value === '' || !is_numeric($value)) return '—';
+    return number_format((float) $value, 2, '.', '');
+}
+
 function surveyReportingQuestionCell(?array $question): string
 {
     if (!$question) return '';
     return (string) ($question['rating'] ?? '—')
-        . ' | factor ' . (string) ($question['rating_factor_percent'] ?? '—') . '%'
-        . ' | weight ' . (string) ($question['weight_percent'] ?? '—') . '%'
-        . ' | contribution ' . (string) ($question['contribution_percent'] ?? '—') . ' pp';
+        . ' | factor ' . surveyReportingDisplayPercent($question['rating_factor_percent'] ?? null) . '%'
+        . ' | weight ' . surveyReportingDisplayPercent($question['weight_percent'] ?? null) . '%'
+        . ' | contribution ' . surveyReportingDisplayPercent($question['contribution_percent'] ?? null) . ' pp';
 }

@@ -47,6 +47,8 @@ const DYNABASE_XLSX_STYLE_WRAP = 17;
 const DYNABASE_XLSX_STYLE_KPI_LABEL = 18;
 const DYNABASE_XLSX_STYLE_KPI_VALUE = 19;
 const DYNABASE_XLSX_STYLE_LOCATION = 20;
+// Opt-in for survey score/percentage points stored as 0–100 numeric values.
+const DYNABASE_XLSX_STYLE_NUMBER_TWO_DECIMALS = 21;
 
 function dynabaseXlsxColumnLetter(int $column): string
 {
@@ -175,6 +177,10 @@ function dynabaseXlsxStyleDefinitions(): array
         ]),
         DYNABASE_XLSX_STYLE_NUMBER => array_replace_recursive($body, [
             'numberFormat' => ['formatCode' => '#,##0'],
+            'alignment' => ['horizontal' => Alignment::HORIZONTAL_RIGHT, 'vertical' => Alignment::VERTICAL_CENTER],
+        ]),
+        DYNABASE_XLSX_STYLE_NUMBER_TWO_DECIMALS => array_replace_recursive($body, [
+            'numberFormat' => ['formatCode' => '0.00'],
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_RIGHT, 'vertical' => Alignment::VERTICAL_CENTER],
         ]),
         DYNABASE_XLSX_STYLE_DATE => array_replace_recursive($body, [

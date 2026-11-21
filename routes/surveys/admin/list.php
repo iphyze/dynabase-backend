@@ -77,7 +77,7 @@ $total = dbScalarInt($conn, 'SELECT COUNT(*) AS total FROM clients_survey_form s
 $summary = dbFetchOne(
     $conn,
     "SELECT COUNT(*) AS total,
-            ROUND(AVG(CASE WHEN s.survey_version = 1 OR s.survey_rated_count > 0 THEN s.overall_score ELSE NULL END), 1) AS average_score,
+            ROUND(AVG(CASE WHEN s.survey_version = 1 OR s.survey_rated_count > 0 THEN s.overall_score ELSE NULL END), 2) AS average_score,
             SUM(CASE WHEN s.survey_version = 1 OR s.survey_rated_count > 0 THEN 1 ELSE 0 END) AS rated_responses,
             SUM(CASE WHEN (s.survey_version = 1 OR s.survey_rated_count > 0) AND s.overall_score >= 87.5 THEN 1 ELSE 0 END) AS excellent_count,
             COUNT(DISTINCT NULLIF(TRIM(s.project_title), '')) AS project_count

@@ -781,7 +781,7 @@ function dynabaseReportSurveyWorkbook(mysqli $conn): array
     $columns = [
         ['key' => 'serial', 'style' => DYNABASE_XLSX_STYLE_CENTER, 'type' => 'number'], ['key' => 'company'], ['key' => 'project_title'], ['key' => 'filled_by'], ['key' => 'position'], ['key' => 'email'], ['key' => 'location'],
         ['key' => 'quality'], ['key' => 'timeline'], ['key' => 'expertise'], ['key' => 'communication'], ['key' => 'resolution'], ['key' => 'cleaniness'], ['key' => 'safety'], ['key' => 'response'],
-        ['key' => 'overall_score', 'style' => DYNABASE_XLSX_STYLE_NUMBER, 'type' => 'number'], ['key' => 'response_status'], ['key' => 'createdAt', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
+        ['key' => 'overall_score', 'style' => DYNABASE_XLSX_STYLE_NUMBER_TWO_DECIMALS, 'type' => 'number'], ['key' => 'response_status'], ['key' => 'createdAt', 'style' => DYNABASE_XLSX_STYLE_DATE, 'type' => 'date'],
     ];
     $dataSheet = dynabaseReportDataSheet('Client Survey Performance Report', 'Client satisfaction responses and delivery performance scores', $headers, $rows, [7, 28, 34, 22, 20, 28, 20, 14, 14, 14, 16, 14, 14, 14, 18, 14, 14, 17], $columns);
     $dataSheet['name'] = 'Survey Responses';

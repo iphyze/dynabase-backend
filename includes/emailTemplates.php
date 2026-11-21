@@ -289,6 +289,8 @@ function dynabaseRenderEmailTemplate(string $key, array $data = []): array
         $filledBy = dynabaseEmailValue($data, 'filled_by', 'Client respondent');
         $email = dynabaseEmailValue($data, 'email', 'Not recorded');
         $score = dynabaseEmailValue($data, 'overall_score', '0');
+        // Display the persisted survey score consistently; no score recalculation.
+        if (is_numeric($score)) $score = number_format((float) $score, 2, '.', '');
         $responseUrl = dynabaseEmailValue($data, 'response_url', rtrim(envString('FRONTEND_URL', 'http://localhost:5173'), '/') . '/client-surveys');
         $subject = 'New client survey response — ' . $project;
         $html = dynabaseEmailLayout([
