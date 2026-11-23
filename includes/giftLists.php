@@ -98,9 +98,9 @@ function assertGiftListAccessible(mysqli $conn, array $authUser, int $giftListId
 
 /**
  * A gift list is "started by PMS" only after an actual successful save by its
- * PMS Admin or a PMS User assigned to that PMS Admin. Global users preparing
- * the list on someone else's behalf never trigger this marker, even if an
- * Admin is additionally marked as PMS-enabled.
+ * PMS Admin (including an Admin with is_pms_admin=1 saving THEIR OWN list)
+ * or a PMS User assigned to that owner. A global Admin preparing a list on
+ * someone else's behalf never triggers this marker.
  *
  * The caller supplies the server-resolved owner (not a browser-provided ID).
  */
@@ -111,7 +111,10 @@ function isGiftListPmsTeamActor(array $actor, int $ownerPmsAdminId): bool
     }
 
     $role = userRole($actor);
-    if ($role === DYNABASE_ROLE_PMS_ADMIN) {
+    if ($role === DYNABASE_ROLE_PMS_ADMIN
+        || ($role === DYNABASE_ROLE_ADMIN && (int) ($actor['is_pms_admin'] ?? 0) === 1)) {
+        // Admins with the PMS flag count only for their OWN gift list; never
+        // for a list prepared on another owner's behalf.
         return (int) ($actor['id'] ?? 0) === $ownerPmsAdminId;
     }
 

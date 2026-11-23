@@ -16,8 +16,19 @@ function giftActivityReconcileEligible(array $entry): bool
     $allowed = [
         'gift_list.created', 'gift_list.updated', 'gift_list.bulk_updated',
         'gift_list.keypersons_added', 'gift_list.portal_saved',
+        'gift_list.item_updated',
     ];
     if (!in_array((string) ($entry['action'] ?? ''), $allowed, true)) {
+        return false;
+    }
+    // Item updates are audited against a key person, not a list ID. The SQL
+    // lookup must confirm that the item belongs to this precise owner/year.
+    if (($entry['action'] ?? '') === 'gift_list.item_updated'
+        && (int) ($entry['verified_gift_item_link'] ?? 0) !== 1) {
+        return false;
+    }
+    if (($entry['action'] ?? '') === 'gift_list.keypersons_added'
+        && (int) ($entry['added_count'] ?? -1) === 0) {
         return false;
     }
 
@@ -30,6 +41,10 @@ function giftActivityReconcileEligible(array $entry): bool
 
     if ($role === 'pms_admin') {
         return $actor === $owner && ($entry['current_role'] ?? '') === 'pms_admin';
+    }
+    if ($role === 'admin') {
+        return $actor === $owner && ($entry['current_role'] ?? '') === 'admin'
+            && (int) ($entry['current_is_pms_admin'] ?? 0) === 1;
     }
     if ($role === 'pms_user') {
         return ($entry['current_role'] ?? '') === 'pms_user'

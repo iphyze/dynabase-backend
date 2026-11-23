@@ -36,6 +36,9 @@ foreach ($rows as $row) {
     if (!dynabaseIsDeliverableEmail($row['email'])) continue;
     $items[] = giftEmailRecipientPayload($row);
 }
+// The saved-PMS activity marker can change while a sender is reviewing emails.
+// Never serve a cached Started/Not Started status.
+header('Cache-Control: no-store, private');
 jsonResponse([
     'status' => 'Success',
     'data' => [

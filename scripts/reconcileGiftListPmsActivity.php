@@ -35,19 +35,30 @@ SELECT a.id AS audit_id, a.actor_user_id, a.actor_role, a.action,
        CAST(JSON_UNQUOTE(JSON_EXTRACT(a.metadata, '$.gift_year')) AS UNSIGNED) AS gift_year,
        gl.owner_pms_admin_id AS current_list_owner_id,
        u.role AS current_role,
-       u.parent_pms_admin_id AS current_parent_pms_admin_id
+       u.is_pms_admin AS current_is_pms_admin,
+       u.parent_pms_admin_id AS current_parent_pms_admin_id,
+       (a.action = 'gift_list.item_updated' AND a.entity_type = 'keyperson') AS verified_gift_item_link,
+       CAST(JSON_UNQUOTE(JSON_EXTRACT(a.metadata, '$.added_count')) AS UNSIGNED) AS added_count
 FROM audit_logs a
-JOIN gift_lists gl ON a.entity_type = 'gift_list'
-    AND a.entity_id REGEXP '^[0-9]+$'
-    AND CAST(a.entity_id AS UNSIGNED) = gl.id
 JOIN users u ON u.id = a.actor_user_id
-WHERE gl.gift_year = ?
-  AND a.action IN (
+JOIN gift_lists gl ON gl.gift_year = ? AND (
+    (a.entity_type = 'gift_list'
+     AND a.entity_id REGEXP '^[0-9]+$'
+     AND CAST(a.entity_id AS UNSIGNED) = gl.id)
+    OR (a.action = 'gift_list.item_updated'
+     AND a.entity_type = 'keyperson'
+     AND a.entity_id REGEXP '^[0-9]+$'
+     AND gl.owner_pms_admin_id = CAST(JSON_UNQUOTE(JSON_EXTRACT(a.metadata, '$.owner_pms_admin_id')) AS UNSIGNED)
+     AND EXISTS (SELECT 1 FROM gift_list_items gi
+       WHERE gi.gift_list_id = gl.id
+         AND gi.keyperson_id = CAST(a.entity_id AS UNSIGNED)))
+)
+WHERE a.action IN (
       'gift_list.created', 'gift_list.updated',
       'gift_list.bulk_updated', 'gift_list.keypersons_added',
-      'gift_list.portal_saved'
+      'gift_list.portal_saved', 'gift_list.item_updated'
   )
-  AND a.actor_role IN ('pms_admin', 'pms_user')
+  AND a.actor_role IN ('admin', 'pms_admin', 'pms_user')
   AND a.metadata IS NOT NULL
   AND JSON_VALID(a.metadata)
 ORDER BY a.created_at ASC, a.id ASC

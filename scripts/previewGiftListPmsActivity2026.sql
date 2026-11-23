@@ -1,17 +1,17 @@
--- READ-ONLY PREVIEW: run in phpMyAdmin before applying the matching backfill.
--- Evidence is a successful audited PMS-team gift-list save, never a login,
--- recipient count, or a save by a regular Admin/User.
--- We use the audited owner, NOT the gift list's current owner (lists can move).
+-- READ-ONLY PREVIEW for 2026 gift-list starts. Run before the 2026-11-23
+-- audit-based backfill. A genuine PMS-team save is required: an Admin who is
+-- PMS-enabled counts ONLY for their own annual list. Other Admin preparations
+-- are excluded. No table is changed by this preview.
 SELECT CONCAT_WS(' ', owner.first_name, owner.last_name) AS pms_owner,
        first_save.owner_pms_admin_id AS owner_id,
        first_save.actor_user_id AS saved_by_user_id,
        first_save.actor_role AS saved_by_role,
+       first_save.action AS confirmed_save_action,
        first_save.gift_list_id AS original_saved_list_id,
-       first_save.current_list_owner_id AS current_list_owner_id,
+       first_save.current_list_owner_id,
        first_save.saved_at AS first_confirmed_save,
        CASE WHEN existing.id IS NULL THEN 'WILL MARK STARTED' ELSE 'ALREADY TRACKED' END AS action
 FROM (
-
     SELECT
         a.id AS audit_id,
         a.action,
@@ -30,28 +30,41 @@ FROM (
         ) AS save_rank
     FROM audit_logs a
     JOIN users actor ON actor.id = a.actor_user_id
-    JOIN gift_lists gl ON a.entity_type = 'gift_list'
-        AND a.entity_id REGEXP '^[0-9]+$'
-        AND CAST(a.entity_id AS UNSIGNED) = gl.id
-    JOIN users owner ON owner.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(a.metadata, '$.owner_pms_admin_id')) AS UNSIGNED)
-    WHERE a.action IN (
-        'gift_list.portal_saved',
-        'gift_list.created',
-        'gift_list.updated',
-        'gift_list.bulk_updated',
-        'gift_list.keypersons_added'
+    JOIN users owner
+      ON owner.id = CAST(JSON_UNQUOTE(JSON_EXTRACT(a.metadata, '$.owner_pms_admin_id')) AS UNSIGNED)
+    JOIN gift_lists gl ON gl.gift_year = 2026 AND (
+        (a.entity_type = 'gift_list'
+         AND a.entity_id REGEXP '^[0-9]+$'
+         AND CAST(a.entity_id AS UNSIGNED) = gl.id)
+        OR (a.action = 'gift_list.item_updated'
+         AND a.entity_type = 'keyperson'
+         AND a.entity_id REGEXP '^[0-9]+$'
+         AND gl.owner_pms_admin_id = owner.id
+         AND EXISTS (
+            SELECT 1 FROM gift_list_items gi
+            WHERE gi.gift_list_id = gl.id
+              AND gi.keyperson_id = CAST(a.entity_id AS UNSIGNED)
+         ))
     )
-      AND a.actor_role IN ('pms_admin', 'pms_user')
+    WHERE a.action IN (
+        'gift_list.created', 'gift_list.updated', 'gift_list.bulk_updated',
+        'gift_list.keypersons_added', 'gift_list.portal_saved',
+        'gift_list.item_updated'
+    )
+      AND a.actor_role IN ('admin', 'pms_admin', 'pms_user')
       AND a.metadata IS NOT NULL
       AND JSON_VALID(a.metadata)
-      AND gl.gift_year = 2026
       AND CAST(JSON_UNQUOTE(JSON_EXTRACT(a.metadata, '$.gift_year')) AS UNSIGNED) = 2026
       AND owner.status = 'active'
-      AND (owner.role = 'pms_admin' OR owner.is_pms_admin = 1)
+      AND (owner.role = 'pms_admin' OR (owner.role = 'admin' AND owner.is_pms_admin = 1))
+      AND (a.action <> 'gift_list.keypersons_added'
+           OR CAST(JSON_UNQUOTE(JSON_EXTRACT(a.metadata, '$.added_count')) AS UNSIGNED) > 0)
       AND (
-            (a.actor_role = 'pms_admin' AND actor.role = 'pms_admin' AND actor.id = owner.id)
-         OR (a.actor_role = 'pms_user' AND actor.role = 'pms_user'
-             AND actor.parent_pms_admin_id = owner.id)
+          (a.actor_role = 'pms_admin' AND actor.role = 'pms_admin' AND actor.id = owner.id)
+          OR (a.actor_role = 'admin' AND actor.role = 'admin'
+              AND actor.is_pms_admin = 1 AND actor.id = owner.id)
+          OR (a.actor_role = 'pms_user' AND actor.role = 'pms_user'
+              AND actor.parent_pms_admin_id = owner.id)
       )
 ) first_save
 JOIN users owner ON owner.id = first_save.owner_pms_admin_id
